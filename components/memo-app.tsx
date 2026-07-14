@@ -30,7 +30,8 @@ type SaveState = "saved" | "saving" | "dirty" | "error";
 
 const POLL_MS = 1500;
 const DRAFT_BROADCAST_MS = 32;
-const NARROW_QUERY = "(max-width: 768px)";
+/** Phone-width only — keep tablet/desktop browser windows on the desktop layout. */
+const NARROW_QUERY = "(max-width: 480px)";
 
 function isNarrowViewport() {
   return (

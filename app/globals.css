@@ -171,11 +171,11 @@ button:disabled {
 }
 
 .zed-notes-fab {
+  display: none;
   position: fixed;
   left: max(12px, env(safe-area-inset-left, 0px));
   bottom: max(12px, env(safe-area-inset-bottom, 0px));
   z-index: 20;
-  display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 36px;
@@ -794,7 +794,11 @@ button:disabled {
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 480px) {
+  .zed-notes-fab {
+    display: inline-flex;
+  }
+
   .zed-field {
     font-size: 16px;
   }
@@ -804,14 +808,8 @@ button:disabled {
   }
 }
 
-@media (min-width: 769px) {
+@media (min-width: 481px) {
   .zed-empty__actions .zed-btn:first-child {
-    display: none;
-  }
-}
-
-@media (min-width: 769px) and (hover: hover) {
-  .zed-notes-fab {
     display: none;
   }
 }
