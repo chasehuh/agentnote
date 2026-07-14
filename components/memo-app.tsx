@@ -496,7 +496,12 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
             onClick={() => setSidebarOpen(false)}
           />
         ) : null}
-        <aside className="zed-panel" data-open={sidebarOpen}>
+        <aside
+          className="zed-panel"
+          data-open={sidebarOpen}
+          aria-hidden={!sidebarOpen}
+          inert={!sidebarOpen ? true : undefined}
+        >
           <div className="zed-panel__header">
             <span className="zed-panel__title">Notes</span>
             <div className="zed-panel__actions">
