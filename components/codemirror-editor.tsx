@@ -97,6 +97,8 @@ function editorExtensions(
       ".cm-content": {
         caretColor: "var(--c-text-accent)",
         color: "var(--c-editor-fg)",
+        // Top inset: CM mirrors this into gutter element marginTop via
+        // documentPadding — do not also pad .cm-gutters.
         // Bottom padding comes from scrollPastEnd() (content attrs only)
         padding: "20px 28px 0 0",
         minHeight: "100%",
@@ -114,9 +116,11 @@ function editorExtensions(
         fontFamily: "var(--c-buffer-font)",
         fontSize: "var(--c-buffer-size)",
         lineHeight: "var(--c-buffer-line-height)",
-        // Match content top inset only; do not mirror scroll-beyond padding
-        // (% / calc resolves against a different box than .cm-content → drift)
-        paddingTop: "20px",
+        // Do NOT set paddingTop here. CM syncs gutters with
+        // UpdateContext(..., -documentPadding.top) so the first
+        // .cm-gutterElement already gets marginTop = content padding-top.
+        // Extra gutter paddingTop double-counts and shifts every number
+        // ~one line below its text (y-axis desync).
       },
       ".cm-gutter.cm-lineNumbers": {
         minWidth: "var(--c-gutter-w)",
