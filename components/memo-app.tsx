@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useClerk } from "@clerk/nextjs";
+import { UserButton, useClerk } from "@clerk/nextjs";
 import type { Note } from "@/lib/types";
 import { substituteAsciiArrows } from "@/lib/arrows";
 import {
@@ -521,6 +521,18 @@ export function MemoApp({
         </button>
         <span className="zed-titlebar__brand">memo</span>
         <div className="zed-titlebar__spacer" />
+        <div className="zed-titlebar__account">
+          <UserButton
+            appearance={{
+              elements: {
+                rootBox: "zed-titlebar__user-root",
+                avatarBox: "zed-titlebar__avatar",
+                userButtonTrigger: "zed-titlebar__user-trigger",
+                userButtonPopoverCard: "zed-titlebar__popover",
+              },
+            }}
+          />
+        </div>
       </header>
 
       <div className="zed-workspace">

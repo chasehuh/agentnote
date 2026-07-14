@@ -195,6 +195,40 @@ button:disabled {
   flex: 1;
 }
 
+.zed-titlebar__account {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+}
+
+.zed-titlebar__user-root {
+  width: 22px;
+  height: 22px;
+}
+
+.zed-titlebar__user-trigger {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.zed-titlebar__user-trigger:focus-visible {
+  outline: 1px solid var(--c-border-focused);
+  outline-offset: 1px;
+}
+
+.zed-titlebar__avatar {
+  width: 22px !important;
+  height: 22px !important;
+}
+
+.zed-titlebar__popover {
+  background: var(--c-elevated) !important;
+  border: 1px solid var(--c-border) !important;
+  box-shadow: 0 12px 32px #00000059 !important;
+}
+
 .zed-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -526,33 +560,29 @@ button:disabled {
   font-size: 12px;
 }
 
-.zed-dialog--clerk {
-  max-width: 420px;
+.memo-github-sign-in {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.memo-clerk-root {
+.memo-github-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   width: 100%;
+  height: 34px;
+  font-weight: 600;
 }
 
-.memo-clerk-card-box,
-.memo-clerk-card {
-  box-shadow: none !important;
-  background: transparent !important;
-  border: none !important;
-  width: 100% !important;
+.memo-github-btn__icon {
+  flex-shrink: 0;
 }
 
-.memo-clerk-hidden {
-  display: none !important;
-}
-
-.memo-clerk-oauth {
-  width: 100% !important;
-  justify-content: center !important;
-}
-
-.memo-clerk-footer {
-  background: transparent !important;
+.zed-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .zed-btn {
