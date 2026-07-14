@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { UserButton, useClerk } from "@clerk/nextjs";
 import type { Note } from "@/lib/types";
 import { substituteAsciiArrows } from "@/lib/arrows";
 import {
@@ -25,11 +24,10 @@ import {
   type Appearance,
   type ThemeId,
 } from "@/lib/themes";
+import { AccountMenu } from "./account-menu";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import {
   PlusIcon,
-  SettingsIcon,
-  SignOutIcon,
   SidebarLeftClosedIcon,
   SidebarLeftOpenIcon,
 } from "./icons";
@@ -118,7 +116,6 @@ export function MemoApp({
   initialNotes: Note[];
   userId: string;
 }) {
-  const { signOut } = useClerk();
   const [notes, setNotes] = useState(() => sortNotesByRecent(initialNotes));
   const [activeId, setActiveId] = useState<string | null>(
     initialNotes[0]?.id ?? null,
@@ -530,40 +527,7 @@ export function MemoApp({
         </span>
         <div className="zed-titlebar__spacer" />
         <ReloadToUpdate />
-        <div className="zed-titlebar__account">
-          <UserButton
-            appearance={{
-              elements: {
-                rootBox: "zed-titlebar__user-root",
-                avatarBox: "zed-titlebar__avatar",
-                userButtonTrigger: "zed-titlebar__user-trigger",
-                userButtonPopoverCard: "zed-titlebar__popover",
-                userButtonPopoverMain: "zed-titlebar__popover-main",
-                userButtonPopoverActions: "zed-titlebar__popover-actions",
-                userButtonPopoverActionButton:
-                  "zed-titlebar__popover-action",
-                userButtonPopoverActionButtonText:
-                  "zed-titlebar__popover-action-text",
-                userButtonPopoverActionButtonIcon:
-                  "zed-titlebar__popover-action-icon",
-                userButtonPopoverFooter: "zed-titlebar__popover-footer",
-              },
-            }}
-          >
-            <UserButton.MenuItems>
-              <UserButton.Action
-                label="Settings"
-                labelIcon={<SettingsIcon size={14} />}
-                onClick={() => setSettingsOpen(true)}
-              />
-              <UserButton.Action
-                label="Sign out"
-                labelIcon={<SignOutIcon size={14} />}
-                onClick={() => void signOut({ redirectUrl: "/login" })}
-              />
-            </UserButton.MenuItems>
-          </UserButton>
-        </div>
+        <AccountMenu onOpenSettings={() => setSettingsOpen(true)} />
       </header>
 
       <div className="zed-workspace">
