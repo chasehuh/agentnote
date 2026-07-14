@@ -26,6 +26,8 @@ import {
 } from "@/lib/themes";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import {
+  CloseIcon,
+  FileTextIcon,
   PlusIcon,
   SettingsIcon,
   SidebarLeftClosedIcon,
@@ -563,6 +565,10 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
                       className="zed-note-item__hit"
                       onClick={() => selectNote(note)}
                     >
+                      <FileTextIcon
+                        size={14}
+                        className="zed-note-item__icon"
+                      />
                       <span className="zed-note-item__title">{label}</span>
                       <span className="zed-note-item__date">{updatedLabel}</span>
                     </button>
@@ -571,8 +577,9 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
                       className="zed-note-item__delete"
                       onClick={() => void removeNote(note.id)}
                       aria-label="Delete note"
+                      title="Delete note"
                     >
-                      ×
+                      <CloseIcon size={12} />
                     </button>
                   </div>
                 );
@@ -586,7 +593,7 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
               data-active={settingsOpen}
               onClick={() => setSettingsOpen(true)}
             >
-              <SettingsIcon />
+              <SettingsIcon size={14} />
               Settings
             </button>
           </div>
