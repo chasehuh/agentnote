@@ -78,7 +78,8 @@
   --c-buffer-font: "Zed Mono", "Lilex", ui-monospace, monospace;
   --c-ui-size: 12px;
   --c-buffer-size: 13px;
-  --c-buffer-line-height: 1.45;
+  /* Zed buffer_line_height: comfortable */
+  --c-buffer-line-height: 1.618;
   --c-gutter-w: 48px;
   --c-panel-w: 260px;
 }
