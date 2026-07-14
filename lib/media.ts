@@ -93,6 +93,17 @@ export function withMarkdownImageWidth(
   );
 }
 
+/** Clear Obsidian `|width` / `|WxH` from an image mark (reset to natural size). */
+export function withoutMarkdownImageWidth(
+  text: string,
+  image: Pick<MarkdownImage, "index" | "length" | "alt" | "url">,
+): string {
+  const next = markdownImage(image.url, image.alt);
+  return (
+    text.slice(0, image.index) + next + text.slice(image.index + image.length)
+  );
+}
+
 
 export async function uploadImageBytes(
   bytes: ArrayBuffer,

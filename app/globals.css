@@ -398,73 +398,48 @@ button:disabled {
 }
 
 .zed-buffer {
-  /* Scrollport: Zed default scroll_beyond_last_line = one_page */
-  container-type: size;
   flex: 1;
   min-height: 0;
   display: flex;
-  align-items: flex-start;
-  overflow: auto;
+  align-items: stretch;
+  overflow: hidden;
   background: var(--c-editor);
 }
 
-.zed-gutter {
-  flex-shrink: 0;
-  width: var(--c-gutter-w);
-  overflow: visible;
-  padding: 20px 0;
-  /* Match .zed-editor__beyond so line numbers stay aligned while scrolling. */
-  padding-bottom: max(0px, calc(100cqh - 1lh));
-  background: var(--c-editor);
-  font-family: var(--c-buffer-font);
-  font-size: var(--c-buffer-size);
-  line-height: var(--c-buffer-line-height);
-  text-align: right;
-  user-select: none;
+.zed-buffer--cm {
+  flex-direction: column;
 }
 
-.zed-editor-column {
+.zed-cm-host {
   flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.zed-editor__beyond {
-  flex: 0 0 auto;
+  min-height: 0;
   width: 100%;
-  font-size: var(--c-buffer-size);
-  line-height: var(--c-buffer-line-height);
-  height: max(0px, calc(100cqh - 1lh));
-  cursor: text;
+  height: 100%;
 }
 
-.zed-image-previews {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px 28px 24px 14px;
+.zed-cm-host .cm-editor {
+  height: 100%;
+  background: var(--c-editor);
 }
 
-.zed-image-previews__item {
+.cm-md-image {
   position: relative;
   display: block;
-  max-width: 100%;
+  max-width: calc(100% - 28px);
+  margin: 8px 28px 16px 14px;
   line-height: 0;
 }
 
-.zed-image-previews__item img {
+.cm-md-image img {
   display: block;
   width: 100%;
   height: auto;
   border: 1px solid var(--c-border-variant);
   user-select: none;
-  pointer-events: none;
+  cursor: pointer;
 }
 
-.zed-image-previews__handle {
+.cm-md-image__handle {
   position: absolute;
   right: -5px;
   bottom: -5px;
@@ -477,66 +452,11 @@ button:disabled {
   touch-action: none;
 }
 
-.zed-image-previews__handle:hover,
-.zed-image-previews__handle:focus-visible {
+.cm-md-image__handle:hover,
+.cm-md-image__handle:focus-visible {
   background: var(--c-text-accent);
   border-color: var(--c-text-accent);
   outline: none;
-}
-
-.zed-gutter__line {
-  box-sizing: content-box;
-  height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));
-  padding-right: 12px;
-  color: var(--c-editor-line-number);
-  line-height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));
-}
-
-.zed-gutter[data-wrap="true"] .zed-gutter__line {
-  /* Height is set inline from measured visual rows when wrap is on. */
-  min-height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));
-}
-
-.zed-gutter__line[data-active="true"] {
-  color: var(--c-editor-active-line-number);
-}
-
-.zed-editor__body {
-  display: block;
-  box-sizing: content-box;
-  flex: 0 0 auto;
-  min-width: 0;
-  width: 100%;
-  /* Height is set in JS from scrollHeight so the buffer (not the textarea) scrolls. */
-  height: auto;
-  min-height: calc(1lh);
-  border: 0;
-  outline: none;
-  resize: none;
-  background: transparent;
-  padding: 20px 28px 0 14px;
-  font-family: var(--c-buffer-font);
-  font-size: var(--c-buffer-size);
-  font-weight: 400;
-  line-height: var(--c-buffer-line-height);
-  color: var(--c-editor-fg);
-  caret-color: var(--c-text-accent);
-  tab-size: 4;
-  font-variant-ligatures: contextual;
-  font-feature-settings: "calt" 1;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  overflow: hidden;
-  field-sizing: content;
-}
-
-.zed-editor__body[data-wrap="false"] {
-  white-space: pre;
-  overflow-wrap: normal;
-}
-
-.zed-editor__body::placeholder {
-  color: var(--c-text-placeholder);
 }
 
 .zed-empty {
