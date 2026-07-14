@@ -1,26 +1,744 @@
 @import "tailwindcss";
 
+/* Exact fonts shipped with Zed (assets/fonts) */
+@font-face {
+  font-family: "Zed Sans";
+  src: url("/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Zed Sans";
+  src: url("/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Zed Sans";
+  src: url("/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Zed Mono";
+  src: url("/fonts/lilex/Lilex-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Zed Mono";
+  src: url("/fonts/lilex/Lilex-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Zed Mono";
+  src: url("/fonts/lilex/Lilex-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Semantic color tokens — default Cursor Dark; applyTheme() overrides at runtime */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --c-background: #141414;
+  --c-surface: #181818;
+  --c-elevated: #1c1c1c;
+  --c-editor: #141414;
+  --c-element: #1c1c1c;
+  --c-element-hover: #2a2a2a;
+  --c-element-selected: #2f2f2f;
+  --c-border: #2b2b2b;
+  --c-border-variant: #242424;
+  --c-border-focused: #264f78;
+  --c-text: #e4e4e4;
+  --c-text-muted: #a0a0a0;
+  --c-text-placeholder: #6e6e6e;
+  --c-text-accent: #81a1c1;
+  --c-editor-fg: #d6d6dd;
+  --c-editor-line-number: #525252;
+  --c-editor-active-line-number: #c6c6c6;
+  --c-editor-active-line: #ffffff08;
+  --c-success: #89d185;
+  --c-warning: #cca700;
+  --c-error: #f14c4c;
+  --c-scrollbar: #5a5a5a66;
+  --c-selection: #264f7880;
+  --c-ui-font: "Zed Sans", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --c-buffer-font: "Zed Mono", "Lilex", ui-monospace, monospace;
+  --c-ui-size: 12px;
+  --c-buffer-size: 13px;
+  --c-buffer-line-height: 1.45;
+  --c-gutter-w: 48px;
+  --c-panel-w: 260px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  background: var(--c-editor);
+  color: var(--c-text);
+  font-family: var(--c-ui-font);
+  font-size: var(--c-ui-size);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+::selection {
+  background: var(--c-selection);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--c-scrollbar);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* —— Zed chrome primitives —— */
+
+.zed-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--c-editor);
+  color: var(--c-text);
+  font-family: var(--c-ui-font);
+}
+
+.zed-titlebar {
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: var(--c-background);
+  border-bottom: 1px solid var(--c-border-variant);
+  color: var(--c-text-muted);
+  user-select: none;
+}
+
+.zed-titlebar__brand {
+  color: var(--c-text);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.zed-titlebar__spacer {
+  flex: 1;
+}
+
+.zed-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--c-text-muted);
+}
+
+.zed-icon-btn:hover {
+  background: var(--c-element-hover);
+  color: var(--c-text);
+}
+
+.zed-icon-btn[data-active="true"] {
+  background: var(--c-element-selected);
+  color: var(--c-text);
+}
+
+.zed-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.zed-panel {
+  width: var(--c-panel-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--c-surface);
+  border-right: 1px solid var(--c-border-variant);
+  overflow: hidden;
+  transition:
+    width 160ms ease,
+    border-color 160ms ease;
+  will-change: width;
+}
+
+.zed-panel[data-open="false"] {
+  width: 0;
+  border-right-color: transparent;
+}
+
+.zed-panel__header {
+  height: 40px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--c-border-variant);
+}
+
+.zed-panel__title {
+  color: var(--c-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.zed-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.zed-text-btn {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 4px;
+  color: var(--c-text-placeholder);
+  font-size: 11px;
+}
+
+.zed-text-btn:hover {
+  background: var(--c-element-hover);
+  color: var(--c-text);
+}
+
+.zed-panel__list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.zed-panel__empty {
+  padding: 12px 8px;
+  color: var(--c-text-placeholder);
+  font-size: 12px;
+}
+
+.zed-note-item {
+  position: relative;
+  display: block;
+  border-radius: 6px;
+}
+
+.zed-note-item:hover {
+  background: var(--c-element-hover);
+}
+
+.zed-note-item[data-active="true"] {
+  background: var(--c-element-selected);
+}
+
+.zed-note-item__hit {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 28px 10px 12px;
+  text-align: left;
+}
+
+.zed-note-item__title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.zed-note-item[data-active="true"] .zed-note-item__title,
+.zed-note-item:hover .zed-note-item__title {
+  color: var(--c-text);
+}
+
+.zed-note-item__date {
+  display: block;
+  color: var(--c-text-placeholder);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.zed-note-item__delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--c-text-placeholder);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.zed-note-item:hover .zed-note-item__delete,
+.zed-note-item[data-active="true"] .zed-note-item__delete {
+  display: inline-flex;
+}
+
+.zed-note-item__delete:hover {
+  background: var(--c-element-hover);
+  color: var(--c-error);
+}
+
+.zed-center {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background: var(--c-editor);
+}
+
+.zed-editor {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--c-editor);
+}
+
+.zed-buffer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.zed-gutter {
+  flex-shrink: 0;
+  width: var(--c-gutter-w);
+  overflow: hidden;
+  padding: 20px 0 64px;
+  background: var(--c-editor);
+  font-family: var(--c-buffer-font);
+  font-size: var(--c-buffer-size);
+  line-height: var(--c-buffer-line-height);
+  text-align: right;
+  user-select: none;
+}
+
+.zed-gutter__line {
+  box-sizing: content-box;
+  height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));
+  padding-right: 12px;
+  color: var(--c-editor-line-number);
+  line-height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));
+}
+
+.zed-gutter__line[data-active="true"] {
+  color: var(--c-editor-active-line-number);
+}
+
+.zed-editor__body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  padding: 20px 28px 64px 14px;
+  font-family: var(--c-buffer-font);
+  font-size: var(--c-buffer-size);
+  font-weight: 400;
+  line-height: var(--c-buffer-line-height);
+  color: var(--c-editor-fg);
+  caret-color: var(--c-text-accent);
+  tab-size: 4;
+  white-space: pre;
+  overflow: auto;
+}
+
+.zed-editor__body::placeholder {
+  color: var(--c-text-placeholder);
+}
+
+.zed-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--c-text-muted);
+  background: var(--c-editor);
+}
+
+.zed-empty__hint {
+  color: var(--c-text-placeholder);
+  font-size: 12px;
+}
+
+.zed-link {
+  color: var(--c-text-accent);
+}
+
+.zed-link:hover {
+  text-decoration: underline;
+}
+
+/* Login — elevated surface dialog on editor canvas */
+.zed-login {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--c-editor);
+}
+
+.zed-dialog {
+  width: 100%;
+  max-width: 360px;
+  background: var(--c-elevated);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px #00000059;
+  padding: 22px 22px 18px;
+}
+
+.zed-dialog__title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.zed-dialog__desc {
+  margin: 0 0 18px;
+  color: var(--c-text-muted);
+  font-size: 13px;
+}
+
+.zed-field {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--c-editor);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  color: var(--c-editor-fg);
+  outline: none;
+}
+
+.zed-field:focus {
+  border-color: var(--c-border-focused);
+}
+
+.zed-field::placeholder {
+  color: var(--c-text-placeholder);
+}
+
+.zed-dialog__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.zed-dialog__error {
+  min-height: 16px;
+  color: var(--c-error);
+  font-size: 12px;
+}
+
+.zed-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background: var(--c-element-selected);
+  color: var(--c-text);
+  border: 1px solid var(--c-border);
+  font-size: 13px;
+}
+
+.zed-btn:hover:not(:disabled) {
+  background: var(--c-element-hover);
+}
+
+.zed-btn-primary {
+  background: var(--c-text-accent);
+  border-color: var(--c-border-focused);
+  color: #0b0b0b;
+}
+
+.zed-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.zed-panel__footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  border-top: 1px solid var(--c-border-variant);
+}
+
+.zed-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: var(--c-text-muted);
+  font-size: 12px;
+}
+
+.zed-settings-btn:hover,
+.zed-settings-btn[data-active="true"] {
+  background: var(--c-element-hover);
+  color: var(--c-text);
+}
+
+/* Settings modal — self-contained, high specificity */
+.memo-settings-root {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.memo-settings {
+  width: min(420px, 100%);
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--c-elevated);
+  color: var(--c-text);
+  border: 1px solid var(--c-border);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  font-family: var(--c-ui-font);
+}
+
+.memo-settings__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--c-border-variant);
+}
+
+.memo-settings__header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--c-text);
+}
+
+.memo-settings__ghost {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: var(--c-text-muted);
+  font-size: 12px;
+  background: transparent;
+  border: 0;
+}
+
+.memo-settings__ghost:hover {
+  background: var(--c-element-hover);
+  color: var(--c-text);
+}
+
+.memo-settings__body {
+  padding: 16px 18px 20px;
+  overflow: auto;
+}
+
+.memo-settings__section + .memo-settings__section {
+  margin-top: 22px;
+}
+
+.memo-settings__label {
+  margin: 0 0 10px;
+  color: var(--c-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.memo-settings__segment {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--c-editor);
+  border: 1px solid var(--c-border-variant);
+}
+
+.memo-settings__segment-btn {
+  height: 32px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--c-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.memo-settings__segment-btn:hover {
+  color: var(--c-text);
+}
+
+.memo-settings__segment-btn[data-active="true"] {
+  background: var(--c-element-selected);
+  color: var(--c-text);
+}
+
+.memo-settings__themes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memo-settings__theme {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  color: var(--c-text-muted);
+}
+
+.memo-settings__theme:hover {
+  background: var(--c-element-hover);
+  color: var(--c-text);
+}
+
+.memo-settings__theme[data-active="true"] {
+  background: var(--c-element-selected);
+  border-color: var(--c-border-focused);
+  color: var(--c-text);
+}
+
+.memo-settings__swatch {
+  display: grid;
+  grid-template-columns: repeat(4, 11px);
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.memo-settings__swatch i {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.memo-settings__theme-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.memo-settings__theme-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: inherit;
+}
+
+.memo-settings__theme-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--c-text-placeholder);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
