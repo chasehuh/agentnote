@@ -449,6 +449,7 @@ button:disabled {
 }
 
 .zed-image-previews__item {
+  position: relative;
   display: block;
   max-width: 100%;
   line-height: 0;
@@ -456,9 +457,31 @@ button:disabled {
 
 .zed-image-previews__item img {
   display: block;
-  max-width: min(100%, 720px);
+  width: 100%;
   height: auto;
   border: 1px solid var(--c-border-variant);
+  user-select: none;
+  pointer-events: none;
+}
+
+.zed-image-previews__handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--c-border);
+  background: var(--c-elevated);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.zed-image-previews__handle:hover,
+.zed-image-previews__handle:focus-visible {
+  background: var(--c-text-accent);
+  border-color: var(--c-text-accent);
+  outline: none;
 }
 
 .zed-gutter__line {

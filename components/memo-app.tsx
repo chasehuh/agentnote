@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Note } from "@/lib/types";
 import { substituteAsciiArrows } from "@/lib/arrows";
-import { extractMarkdownImages, markdownImage } from "@/lib/media";
+import { extractMarkdownImages, markdownImage, withMarkdownImageWidth } from "@/lib/media";
 import {
   measureWrappedRowCounts,
   unitRowCounts,
@@ -30,6 +30,7 @@ import {
   type ThemeId,
 } from "@/lib/themes";
 import { MenuIcon, PlusIcon, SettingsIcon } from "./icons";
+import { ResizableImagePreview } from "./resizable-image-preview";
 import { SettingsPanel } from "./settings-panel";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
@@ -333,6 +334,18 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
       }
     },
     [insertAtCaret],
+  );
+
+  const resizeBodyImage = useCallback(
+    (imageIndex: number, width: number) => {
+      const images = extractMarkdownImages(body);
+      const image = images.find((item) => item.index === imageIndex);
+      if (!image) return;
+      const next = withMarkdownImageWidth(body, image, width);
+      if (next === body) return;
+      setBody(next);
+    },
+    [body],
   );
 
   const refreshGutterMetrics = useCallback(() => {
@@ -812,16 +825,13 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
                   {bodyImages.length > 0 ? (
                     <div className="zed-image-previews">
                       {bodyImages.map((image) => (
-                        <a
+                        <ResizableImagePreview
                           key={`${image.index}-${image.url}`}
-                          className="zed-image-previews__item"
-                          href={image.url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={image.url} alt={image.alt || ""} />
-                        </a>
+                          image={image}
+                          onWidthChange={(width) => {
+                            resizeBodyImage(image.index, width);
+                          }}
+                        />
                       ))}
                     </div>
                   ) : null}
