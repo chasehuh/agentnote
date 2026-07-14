@@ -29,6 +29,7 @@ import { CodeMirrorEditor } from "./codemirror-editor";
 import {
   PlusIcon,
   SettingsIcon,
+  SignOutIcon,
   SidebarLeftClosedIcon,
   SidebarLeftOpenIcon,
 } from "./icons";
@@ -476,10 +477,6 @@ export function MemoApp({
     });
   }
 
-  async function logout() {
-    await signOut({ redirectUrl: "/login" });
-  }
-
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const meta = event.metaKey || event.ctrlKey;
@@ -529,9 +526,31 @@ export function MemoApp({
                 avatarBox: "zed-titlebar__avatar",
                 userButtonTrigger: "zed-titlebar__user-trigger",
                 userButtonPopoverCard: "zed-titlebar__popover",
+                userButtonPopoverMain: "zed-titlebar__popover-main",
+                userButtonPopoverActions: "zed-titlebar__popover-actions",
+                userButtonPopoverActionButton:
+                  "zed-titlebar__popover-action",
+                userButtonPopoverActionButtonText:
+                  "zed-titlebar__popover-action-text",
+                userButtonPopoverActionButtonIcon:
+                  "zed-titlebar__popover-action-icon",
+                userButtonPopoverFooter: "zed-titlebar__popover-footer",
               },
             }}
-          />
+          >
+            <UserButton.MenuItems>
+              <UserButton.Action
+                label="Settings"
+                labelIcon={<SettingsIcon size={14} />}
+                onClick={() => setSettingsOpen(true)}
+              />
+              <UserButton.Action
+                label="Sign out"
+                labelIcon={<SignOutIcon size={14} />}
+                onClick={() => void signOut({ redirectUrl: "/login" })}
+              />
+            </UserButton.MenuItems>
+          </UserButton>
         </div>
       </header>
 
@@ -598,17 +617,6 @@ export function MemoApp({
               })
             )}
           </nav>
-          <div className="zed-panel__footer">
-            <button
-              type="button"
-              className="zed-settings-btn"
-              data-active={settingsOpen}
-              onClick={() => setSettingsOpen(true)}
-            >
-              <SettingsIcon />
-              Settings
-            </button>
-          </div>
         </aside>
 
         <section className="zed-center">
@@ -658,7 +666,6 @@ export function MemoApp({
         onThemeChange={selectTheme}
         onAppearanceChange={selectAppearance}
         onWrapChange={selectWrap}
-        onLock={() => void logout()}
       />
     </div>
   );

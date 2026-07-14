@@ -110,6 +110,34 @@ export function SidebarLeftOpenIcon({ size = 14, className }: IconProps) {
   );
 }
 
+/** Minimal log-out mark (arrow from door) for account menu */
+export function SignOutIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <path
+        d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v7A1.5 1.5 0 0 0 3.5 13H6"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M7 8h7m0 0-2.5-2.5M14 8l-2.5 2.5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** `settings.svg` */
 export function SettingsIcon({ size = 16, className }: IconProps) {
   return (

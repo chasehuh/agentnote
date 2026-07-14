@@ -35,7 +35,6 @@ export function SettingsPanel({
   onThemeChange,
   onAppearanceChange,
   onWrapChange,
-  onLock,
 }: {
   open: boolean;
   themeId: ThemeId;
@@ -45,7 +44,6 @@ export function SettingsPanel({
   onThemeChange: (id: ThemeId) => void;
   onAppearanceChange: (appearance: Appearance) => void;
   onWrapChange: (wrap: boolean) => void;
-  onLock: () => void;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -146,22 +144,6 @@ export function SettingsPanel({
                 </button>
               ))}
             </div>
-          </section>
-
-          <section className="memo-settings__section">
-            <h3 className="memo-settings__label">Session</h3>
-            <button
-              type="button"
-              className="memo-settings__theme"
-              onClick={onLock}
-            >
-              <span className="memo-settings__theme-copy">
-                <span className="memo-settings__theme-name">Sign out</span>
-                <span className="memo-settings__theme-sub">
-                  Sign out of GitHub session
-                </span>
-              </span>
-            </button>
           </section>
         </div>
       </div>
