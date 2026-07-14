@@ -90,6 +90,7 @@
 html,
 body {
   height: 100%;
+  height: 100dvh;
 }
 
 body {
@@ -101,6 +102,7 @@ body {
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
 }
 
 button,
@@ -148,10 +150,36 @@ button:disabled {
   display: flex;
   flex-direction: column;
   height: 100%;
+  height: 100dvh;
   overflow: hidden;
   background: var(--c-editor);
   color: var(--c-text);
   font-family: var(--c-ui-font);
+  padding:
+    env(safe-area-inset-top, 0)
+    env(safe-area-inset-right, 0)
+    env(safe-area-inset-bottom, 0)
+    env(safe-area-inset-left, 0);
+}
+
+.zed-panel-backdrop {
+  display: none;
+}
+
+.zed-mobile-bar {
+  display: none;
+}
+
+.zed-panel__close {
+  display: none;
+}
+
+.zed-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .zed-titlebar {
@@ -448,10 +476,15 @@ button:disabled {
 /* Login — elevated surface dialog on editor canvas */
 .zed-login {
   min-height: 100%;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding:
+    max(24px, env(safe-area-inset-top, 0px))
+    max(24px, env(safe-area-inset-right, 0px))
+    max(24px, env(safe-area-inset-bottom, 0px))
+    max(24px, env(safe-area-inset-left, 0px));
   background: var(--c-editor);
 }
 
@@ -741,4 +774,139 @@ button:disabled {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+@media (max-width: 768px) {
+  :root {
+    --c-ui-size: 14px;
+    --c-buffer-size: 16px;
+    --c-gutter-w: 0px;
+  }
+
+  .zed-panel-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    border: 0;
+    background: rgba(0, 0, 0, 0.45);
+  }
+
+  .zed-panel {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 40;
+    width: min(var(--c-panel-w), 86vw);
+    max-width: 320px;
+    border-right: 1px solid var(--c-border-variant);
+    box-shadow: 12px 0 40px rgba(0, 0, 0, 0.35);
+    transform: translateX(0);
+    transition:
+      transform 180ms ease,
+      width 180ms ease,
+      border-color 180ms ease;
+    padding-top: env(safe-area-inset-top, 0);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  .zed-panel[data-open="false"] {
+    width: min(var(--c-panel-w), 86vw);
+    max-width: 320px;
+    border-right-color: var(--c-border-variant);
+    transform: translateX(-105%);
+    pointer-events: none;
+  }
+
+  .zed-panel__close {
+    display: inline-flex;
+  }
+
+  .zed-mobile-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    min-height: 48px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--c-border-variant);
+    background: var(--c-surface);
+  }
+
+  .zed-mobile-bar__title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--c-text);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .zed-mobile-bar__btn,
+  .zed-icon-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+  }
+
+  .zed-gutter {
+    display: none;
+  }
+
+  .zed-editor__body {
+    padding: 16px 16px 48px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .zed-note-item__delete {
+    display: inline-flex;
+  }
+
+  .zed-note-item__hit {
+    min-height: 48px;
+    padding: 12px 36px 12px 12px;
+  }
+
+  .zed-settings-btn {
+    min-height: 44px;
+  }
+
+  .zed-empty__hint--desktop {
+    display: none;
+  }
+
+  .zed-field,
+  .zed-btn {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .zed-dialog {
+    max-width: 100%;
+  }
+
+  .memo-settings-root {
+    align-items: stretch;
+    padding:
+      max(12px, env(safe-area-inset-top, 0px))
+      max(12px, env(safe-area-inset-right, 0px))
+      max(12px, env(safe-area-inset-bottom, 0px))
+      max(12px, env(safe-area-inset-left, 0px));
+  }
+
+  .memo-settings {
+    width: 100%;
+    max-height: none;
+    flex: 1;
+  }
+}
+
+@media (min-width: 769px) {
+  .zed-empty__actions .zed-btn:first-child {
+    display: none;
+  }
 }

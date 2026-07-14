@@ -18,13 +18,20 @@ import {
   openSyncChannel,
   type SyncMessage,
 } from "@/lib/tab-sync";
-import { PlusIcon, SettingsIcon } from "./icons";
+import { CloseIcon, MenuIcon, PlusIcon, SettingsIcon } from "./icons";
 import { SettingsPanel } from "./settings-panel";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
 const POLL_MS = 1500;
 const DRAFT_BROADCAST_MS = 32;
+const NARROW_QUERY = "(max-width: 768px)";
+
+function isNarrowViewport() {
+  return (
+    typeof window !== "undefined" && window.matchMedia(NARROW_QUERY).matches
+  );
+}
 
 function previewTitle(note: Pick<Note, "title" | "body">) {
   const fromTitle = note.title.trim();
@@ -244,6 +251,7 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
     setBody(note.body);
     setSaveState("saved");
     setCaret(0);
+    if (isNarrowViewport()) setSidebarOpen(false);
     requestAnimationFrame(() => bodyRef.current?.focus());
   }, []);
 
@@ -416,7 +424,7 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
       note: data.note,
     });
     selectNote(data.note);
-    setSidebarOpen(true);
+    if (!isNarrowViewport()) setSidebarOpen(true);
   }, [selectNote]);
 
   async function removeNote(id: string) {
@@ -473,9 +481,21 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
     gutterRef.current.scrollTop = bodyRef.current.scrollTop;
   }
 
+  const activeTitle = activeId
+    ? previewTitle({ title: deriveTitle(body), body })
+    : "memo";
+
   return (
     <div className="zed-shell">
       <div className="zed-workspace">
+        {sidebarOpen ? (
+          <button
+            type="button"
+            className="zed-panel-backdrop"
+            aria-label="Close notes"
+            onClick={() => setSidebarOpen(false)}
+          />
+        ) : null}
         <aside className="zed-panel" data-open={sidebarOpen}>
           <div className="zed-panel__header">
             <span className="zed-panel__title">Notes</span>
@@ -488,6 +508,14 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
                 aria-label="New note"
               >
                 <PlusIcon size={13} />
+              </button>
+              <button
+                type="button"
+                className="zed-icon-btn zed-panel__close"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="Close notes"
+              >
+                <CloseIcon size={14} />
               </button>
             </div>
           </div>
@@ -547,6 +575,26 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
         </aside>
 
         <section className="zed-center">
+          <header className="zed-mobile-bar">
+            <button
+              type="button"
+              className="zed-icon-btn zed-mobile-bar__btn"
+              data-active={sidebarOpen}
+              onClick={() => setSidebarOpen((value) => !value)}
+              aria-label={sidebarOpen ? "Close notes" : "Open notes"}
+            >
+              <MenuIcon size={16} />
+            </button>
+            <span className="zed-mobile-bar__title">{activeTitle}</span>
+            <button
+              type="button"
+              className="zed-icon-btn zed-mobile-bar__btn"
+              onClick={() => void createNote()}
+              aria-label="New note"
+            >
+              <PlusIcon size={15} />
+            </button>
+          </header>
           {activeId ? (
             <div className="zed-editor">
               <div className="zed-buffer">
@@ -591,14 +639,25 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
           ) : (
             <div className="zed-empty">
               <p>No open note</p>
-              <p className="zed-empty__hint">⌘B notes · ⌘N new</p>
-              <button
-                type="button"
-                className="zed-link"
-                onClick={() => void createNote()}
-              >
-                Create a note
-              </button>
+              <p className="zed-empty__hint zed-empty__hint--desktop">
+                ⌘B notes · ⌘N new
+              </p>
+              <div className="zed-empty__actions">
+                <button
+                  type="button"
+                  className="zed-btn zed-btn-primary"
+                  onClick={() => setSidebarOpen(true)}
+                >
+                  Notes
+                </button>
+                <button
+                  type="button"
+                  className="zed-btn"
+                  onClick={() => void createNote()}
+                >
+                  New note
+                </button>
+              </div>
             </div>
           )}
         </section>
