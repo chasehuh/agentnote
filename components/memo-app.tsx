@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Note } from "@/lib/types";
+import { substituteAsciiArrows } from "@/lib/arrows";
 import {
   measureWrappedRowCounts,
   unitRowCounts,
@@ -115,7 +116,9 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
   const [activeId, setActiveId] = useState<string | null>(
     initialNotes[0]?.id ?? null,
   );
-  const [body, setBody] = useState(initialNotes[0]?.body ?? "");
+  const [body, setBody] = useState(
+    () => substituteAsciiArrows(initialNotes[0]?.body ?? "").text,
+  );
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -173,15 +176,17 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
     ) {
       return;
     }
-    if (bodyRefState.current === note.body) return;
+    const nextBody = substituteAsciiArrows(note.body).text;
+    if (bodyRefState.current === nextBody) return;
     skipNextSave.current = true;
-    setBody(note.body);
+    setBody(nextBody);
     setSaveState("saved");
   }, []);
 
   const applyRemoteDraft = useCallback(
     (payload: Extract<SyncMessage, { type: "draft" }>) => {
       if (payload.sourceId === tabId.current) return;
+      const nextBody = substituteAsciiArrows(payload.body).text;
       setNotes((prev) => {
         const existing = prev.find((item) => item.id === payload.id);
         if (!existing) return prev;
@@ -189,16 +194,16 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
           {
             ...existing,
             title: payload.title,
-            body: payload.body,
+            body: nextBody,
             updated_at: new Date(payload.at).toISOString(),
           },
           ...prev.filter((item) => item.id !== payload.id),
         ]);
       });
       if (activeIdRef.current !== payload.id) return;
-      if (bodyRefState.current === payload.body) return;
+      if (bodyRefState.current === nextBody) return;
       skipNextSave.current = true;
-      setBody(payload.body);
+      setBody(nextBody);
       setSaveState("saved");
     },
     [],
@@ -308,10 +313,12 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
-    skipNextSave.current = true;
+    const nextBody = substituteAsciiArrows(note.body).text;
+    // Persist migration when opening notes that still store ASCII `->`.
+    skipNextSave.current = nextBody === note.body;
     setActiveId(note.id);
-    setBody(note.body);
-    setSaveState("saved");
+    setBody(nextBody);
+    setSaveState(nextBody === note.body ? "saved" : "dirty");
     setCaret(0);
     if (isNarrowViewport()) setSidebarOpen(false);
     requestAnimationFrame(() => bodyRef.current?.focus());
@@ -402,10 +409,11 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
             remoteNotes,
           )[0] ?? null;
           if (fallback) {
-            skipNextSave.current = true;
+            const nextBody = substituteAsciiArrows(fallback.body).text;
+            skipNextSave.current = nextBody === fallback.body;
             setActiveId(fallback.id);
-            setBody(fallback.body);
-            setSaveState("saved");
+            setBody(nextBody);
+            setSaveState(nextBody === fallback.body ? "saved" : "dirty");
           } else {
             setActiveId(null);
             setBody("");
@@ -439,7 +447,7 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
             skipNextSave.current = true;
             if (fallback) {
               setActiveId(fallback.id);
-              setBody(fallback.body);
+              setBody(substituteAsciiArrows(fallback.body).text);
             } else {
               setActiveId(null);
               setBody("");
@@ -664,8 +672,15 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
                   data-wrap={wrap ? "true" : "false"}
                   value={body}
                   onChange={(event) => {
-                    setBody(event.target.value);
-                    setCaret(event.target.selectionStart);
+                    const next = substituteAsciiArrows(
+                      event.target.value,
+                      event.target.selectionStart,
+                    );
+                    if (next.text !== event.target.value) {
+                      pendingCaretRef.current = next.caret;
+                    }
+                    setBody(next.text);
+                    setCaret(next.caret);
                   }}
                   onKeyDown={(event) => {
                     if (event.key !== "Tab") return;
@@ -678,11 +693,13 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
                     const start = textarea.selectionStart;
                     const end = textarea.selectionEnd;
                     const spaces = "    ";
-                    const next = body.slice(0, start) + spaces + body.slice(end);
-                    const nextCaret = start + spaces.length;
-                    pendingCaretRef.current = nextCaret;
-                    setBody(next);
-                    setCaret(nextCaret);
+                    const next = substituteAsciiArrows(
+                      body.slice(0, start) + spaces + body.slice(end),
+                      start + spaces.length,
+                    );
+                    pendingCaretRef.current = next.caret;
+                    setBody(next.text);
+                    setCaret(next.caret);
                   }}
                   onScroll={syncGutterScroll}
                   onSelect={(event) => {
