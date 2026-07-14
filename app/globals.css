@@ -426,6 +426,11 @@ button:disabled {
   line-height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));
 }
 
+.zed-gutter[data-wrap="true"] .zed-gutter__line {
+  /* Height is set inline from measured visual rows when wrap is on. */
+  min-height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));
+}
+
 .zed-gutter__line[data-active="true"] {
   color: var(--c-editor-active-line-number);
 }

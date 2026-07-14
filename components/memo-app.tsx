@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Note } from "@/lib/types";
 import {
+  measureWrappedRowCounts,
+  unitRowCounts,
+} from "@/lib/gutter";
+import {
   DEFAULT_WRAP,
   WRAP_STORAGE_KEY,
   isWrapPreference,
@@ -120,6 +124,8 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
     useState<Appearance>(DEFAULT_APPEARANCE);
   const [wrap, setWrap] = useState(DEFAULT_WRAP);
   const [caret, setCaret] = useState(0);
+  const [gutterRows, setGutterRows] = useState<number[]>([1]);
+  const [gutterLineHeightPx, setGutterLineHeightPx] = useState(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextSave = useRef(false);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -256,6 +262,38 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
 
   const lineCount = Math.max(1, body.split("\n").length);
   const currentLine = activeLineNumber(body, caret);
+
+  const refreshGutterMetrics = useCallback(() => {
+    const textarea = bodyRef.current;
+    if (!textarea) return;
+
+    const style = window.getComputedStyle(textarea);
+    const lineHeightPx = parseFloat(style.lineHeight);
+    if (Number.isFinite(lineHeightPx) && lineHeightPx > 0) {
+      setGutterLineHeightPx(lineHeightPx);
+    }
+
+    if (!wrap) {
+      setGutterRows(unitRowCounts(lineCount));
+      return;
+    }
+
+    setGutterRows(measureWrappedRowCounts(textarea, body));
+  }, [body, wrap, lineCount]);
+
+  useEffect(() => {
+    refreshGutterMetrics();
+  }, [refreshGutterMetrics]);
+
+  useEffect(() => {
+    const textarea = bodyRef.current;
+    if (!textarea) return;
+    const observer = new ResizeObserver(() => {
+      refreshGutterMetrics();
+    });
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [refreshGutterMetrics, activeId]);
 
   const selectNote = useCallback((note: Note) => {
     if (saveTimer.current) {
@@ -587,14 +625,25 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
           {activeId ? (
             <div className="zed-editor">
               <div className="zed-buffer">
-                <div className="zed-gutter" ref={gutterRef} aria-hidden>
+                <div
+                  className="zed-gutter"
+                  ref={gutterRef}
+                  data-wrap={wrap ? "true" : "false"}
+                  aria-hidden
+                >
                   {Array.from({ length: lineCount }, (_, index) => {
                     const line = index + 1;
+                    const rows = gutterRows[index] ?? 1;
                     return (
                       <div
                         key={line}
                         className="zed-gutter__line"
                         data-active={line === currentLine}
+                        style={
+                          wrap && gutterLineHeightPx > 0
+                            ? { height: `${rows * gutterLineHeightPx}px` }
+                            : undefined
+                        }
                       >
                         {line}
                       </div>
