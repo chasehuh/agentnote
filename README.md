@@ -7,7 +7,7 @@ Live: [memo.chasehuh.com](https://memo.chasehuh.com)
 ## Stack
 
 - Next.js (App Router)
-- CodeMirror 6 note editor (Zed-like chrome, soft wrap, Tab→spaces)
+- CodeMirror 6 note editor (Zed-like chrome, soft wrap, Tab→spaces; ⌘⌫ deletes to hard line start, ⇧⌘K deletes the line)
 - Postgres (`pg`)
 - Vercel + env-based auth gate
 
