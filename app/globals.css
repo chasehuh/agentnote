@@ -244,80 +244,116 @@ button:disabled {
   color: var(--c-text);
 }
 
-.zed-titlebar__account {
+.zed-account {
+  position: relative;
   display: inline-flex;
   align-items: center;
   margin-left: 2px;
 }
 
-.zed-titlebar__user-root {
+.zed-account__trigger {
+  display: inline-flex;
   width: 22px;
   height: 22px;
-}
-
-.zed-titlebar__user-trigger {
-  width: 22px;
-  height: 22px;
+  padding: 0;
+  border: 0;
   border-radius: 999px;
   overflow: hidden;
+  background: var(--c-element-selected);
 }
 
-.zed-titlebar__user-trigger:focus-visible {
+.zed-account__trigger:hover {
+  outline: 1px solid var(--c-border);
+  outline-offset: 1px;
+}
+
+.zed-account__trigger:focus-visible {
   outline: 1px solid var(--c-border-focused);
   outline-offset: 1px;
 }
 
-.zed-titlebar__avatar {
-  width: 22px !important;
-  height: 22px !important;
+.zed-account__avatar {
+  display: block;
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
 }
 
-.zed-titlebar__popover {
-  background: var(--c-elevated) !important;
-  border: 1px solid var(--c-border) !important;
-  border-radius: 6px !important;
-  box-shadow: 0 12px 32px #00000059 !important;
-  min-width: 180px !important;
+.zed-account__avatar--fallback {
+  background: var(--c-element-hover);
+}
+
+.zed-account__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: 196px;
+  padding: 4px;
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  background: var(--c-elevated);
+  box-shadow: 0 12px 28px #00000066;
+}
+
+.zed-account__header {
+  padding: 8px 8px 7px;
+  border-bottom: 1px solid var(--c-border-variant);
+  margin-bottom: 4px;
+}
+
+.zed-account__name {
+  margin: 0;
+  color: var(--c-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.zed-titlebar__popover-main {
-  padding: 4px 0 0 !important;
-  background: transparent !important;
+.zed-account__handle {
+  margin: 2px 0 0;
+  color: var(--c-text-muted);
+  font-size: 11px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.zed-titlebar__popover-actions {
-  padding: 4px !important;
-  gap: 0 !important;
+.zed-account__items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
-.zed-titlebar__popover-action {
-  border-radius: 4px !important;
-  padding: 0 8px !important;
-  min-height: 28px !important;
-  gap: 8px !important;
-  color: var(--c-text) !important;
-  background: transparent !important;
+.zed-account__item {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--c-text);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
 }
 
-.zed-titlebar__popover-action:hover {
-  background: var(--c-element-hover) !important;
+.zed-account__item svg {
+  color: var(--c-text-muted);
 }
 
-.zed-titlebar__popover-action-text {
-  font-size: 12px !important;
-  font-weight: 400 !important;
-  color: var(--c-text) !important;
-}
-
-.zed-titlebar__popover-action-icon {
-  width: 14px !important;
-  height: 14px !important;
-  color: var(--c-text-muted) !important;
-}
-
-.zed-titlebar__popover-footer {
-  display: none !important;
+.zed-account__item:hover,
+.zed-account__item:focus-visible {
+  background: var(--c-element-hover);
+  outline: none;
 }
 
 .zed-icon-btn {
