@@ -1,12 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Note } from "@/lib/types";
 import { substituteAsciiArrows } from "@/lib/arrows";
-import {
-  measureWrappedRowCounts,
-  unitRowCounts,
-} from "@/lib/gutter";
 import {
   DEFAULT_WRAP,
   WRAP_STORAGE_KEY,
@@ -28,6 +24,7 @@ import {
   type Appearance,
   type ThemeId,
 } from "@/lib/themes";
+import { CodeMirrorEditor } from "./codemirror-editor";
 import { MenuIcon, PlusIcon, SettingsIcon } from "./icons";
 import { SettingsPanel } from "./settings-panel";
 
@@ -53,11 +50,6 @@ function previewTitle(note: Pick<Note, "title" | "body">) {
 
 function deriveTitle(body: string) {
   return body.split("\n").find((line) => line.trim())?.trim().slice(0, 120) ?? "";
-}
-
-function activeLineNumber(text: string, caret: number) {
-  const safe = Math.max(0, Math.min(caret, text.length));
-  return text.slice(0, safe).split("\n").length;
 }
 
 function sortNotesByRecent(notes: Note[]) {
@@ -126,15 +118,8 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
   const [appearance, setAppearance] =
     useState<Appearance>(DEFAULT_APPEARANCE);
   const [wrap, setWrap] = useState(DEFAULT_WRAP);
-  const [caret, setCaret] = useState(0);
-  const [gutterRows, setGutterRows] = useState<number[]>([1]);
-  const [gutterLineHeightPx, setGutterLineHeightPx] = useState(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextSave = useRef(false);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
-  const bufferRef = useRef<HTMLDivElement>(null);
-  const pendingCaretRef = useRef<number | null>(null);
   const tabId = useRef(createTabId());
   const syncPost = useRef<(message: SyncMessage) => void>(() => {});
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -147,13 +132,6 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
   bodyRefState.current = body;
   saveStateRef.current = saveState;
   notesRef.current = notes;
-
-  useLayoutEffect(() => {
-    if (pendingCaretRef.current == null || !bodyRef.current) return;
-    const pos = pendingCaretRef.current;
-    pendingCaretRef.current = null;
-    bodyRef.current.setSelectionRange(pos, pos);
-  }, [body]);
 
   const applyRemoteNote = useCallback((note: Note, opts?: { forceBody?: boolean }) => {
     setNotes((prev) => {
@@ -274,48 +252,6 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
     [notes, activeId],
   );
 
-  const lineCount = Math.max(1, body.split("\n").length);
-  const currentLine = activeLineNumber(body, caret);
-
-  const refreshGutterMetrics = useCallback(() => {
-    const textarea = bodyRef.current;
-    if (!textarea) return;
-
-    const style = window.getComputedStyle(textarea);
-    const lineHeightPx = parseFloat(style.lineHeight);
-    if (Number.isFinite(lineHeightPx) && lineHeightPx > 0) {
-      setGutterLineHeightPx(lineHeightPx);
-    }
-
-    // Fallback when field-sizing isn't supported: grow textarea with content
-    // so .zed-buffer (not the textarea) remains the scrollport.
-    if (!CSS.supports("field-sizing", "content")) {
-      textarea.style.height = "auto";
-      textarea.style.height = `${textarea.scrollHeight}px`;
-    }
-
-    if (!wrap) {
-      setGutterRows(unitRowCounts(lineCount));
-      return;
-    }
-
-    setGutterRows(measureWrappedRowCounts(textarea, body));
-  }, [body, wrap, lineCount]);
-
-  useEffect(() => {
-    refreshGutterMetrics();
-  }, [refreshGutterMetrics]);
-
-  useEffect(() => {
-    const buffer = bufferRef.current;
-    if (!buffer) return;
-    const observer = new ResizeObserver(() => {
-      refreshGutterMetrics();
-    });
-    observer.observe(buffer);
-    return () => observer.disconnect();
-  }, [refreshGutterMetrics, activeId]);
-
   const selectNote = useCallback((note: Note) => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
@@ -327,9 +263,7 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
     setActiveId(note.id);
     setBody(nextBody);
     setSaveState(nextBody === note.body ? "saved" : "dirty");
-    setCaret(0);
     if (isNarrowViewport()) setSidebarOpen(false);
-    requestAnimationFrame(() => bodyRef.current?.focus());
   }, []);
 
   const persist = useCallback(async (id: string, nextBody: string) => {
@@ -643,96 +577,14 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
         <section className="zed-center">
           {activeId ? (
             <div className="zed-editor">
-              <div className="zed-buffer" ref={bufferRef}>
-                <div
-                  className="zed-gutter"
-                  ref={gutterRef}
-                  data-wrap={wrap ? "true" : "false"}
-                  aria-hidden
-                >
-                  {Array.from({ length: lineCount }, (_, index) => {
-                    const line = index + 1;
-                    const rows = gutterRows[index] ?? 1;
-                    return (
-                      <div
-                        key={line}
-                        className="zed-gutter__line"
-                        data-active={line === currentLine}
-                        style={
-                          wrap && gutterLineHeightPx > 0
-                            ? { height: `${rows * gutterLineHeightPx}px` }
-                            : undefined
-                        }
-                      >
-                        {line}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="zed-editor-column">
-                  <textarea
-                    ref={bodyRef}
-                    className="zed-editor__body"
-                    data-wrap={wrap ? "true" : "false"}
-                    value={body}
-                    rows={1}
-                    onChange={(event) => {
-                      const next = substituteAsciiArrows(
-                        event.target.value,
-                        event.target.selectionStart,
-                      );
-                      if (next.text !== event.target.value) {
-                        pendingCaretRef.current = next.caret;
-                      }
-                      setBody(next.text);
-                      setCaret(next.caret);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Tab") return;
-                      if (event.metaKey || event.ctrlKey || event.altKey) return;
-                      // Zed-like hard_tabs: false — Tab inserts spaces; avoid focus steal.
-                      event.preventDefault();
-                      if (event.shiftKey) return;
-
-                      const textarea = event.currentTarget;
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const spaces = "    ";
-                      const next = substituteAsciiArrows(
-                        body.slice(0, start) + spaces + body.slice(end),
-                        start + spaces.length,
-                      );
-                      pendingCaretRef.current = next.caret;
-                      setBody(next.text);
-                      setCaret(next.caret);
-                    }}
-                    onSelect={(event) => {
-                      setCaret(event.currentTarget.selectionStart);
-                    }}
-                    onKeyUp={(event) => {
-                      setCaret(event.currentTarget.selectionStart);
-                    }}
-                    onClick={(event) => {
-                      setCaret(event.currentTarget.selectionStart);
-                    }}
-                    placeholder="Start typing…"
-                    spellCheck
-                    autoFocus
-                  />
-                  <div
-                    className="zed-editor__beyond"
-                    aria-hidden
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      const textarea = bodyRef.current;
-                      if (!textarea) return;
-                      textarea.focus();
-                      const end = textarea.value.length;
-                      textarea.setSelectionRange(end, end);
-                      setCaret(end);
-                    }}
-                  />
-                </div>
+              <div className="zed-buffer zed-buffer--cm">
+                <CodeMirrorEditor
+                  key={activeId}
+                  value={body}
+                  wrap={wrap}
+                  onChange={setBody}
+                  autoFocus
+                />
               </div>
             </div>
           ) : (

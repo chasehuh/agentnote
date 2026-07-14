@@ -398,100 +398,65 @@ button:disabled {
 }
 
 .zed-buffer {
-  /* Scrollport: Zed default scroll_beyond_last_line = one_page */
-  container-type: size;
   flex: 1;
   min-height: 0;
   display: flex;
-  align-items: flex-start;
-  overflow: auto;
+  align-items: stretch;
+  overflow: hidden;
   background: var(--c-editor);
 }
 
-.zed-gutter {
-  flex-shrink: 0;
-  width: var(--c-gutter-w);
-  overflow: visible;
-  padding: 20px 0;
-  /* Match .zed-editor__beyond so line numbers stay aligned while scrolling. */
-  padding-bottom: max(0px, calc(100cqh - 1lh));
-  background: var(--c-editor);
-  font-family: var(--c-buffer-font);
-  font-size: var(--c-buffer-size);
-  line-height: var(--c-buffer-line-height);
-  text-align: right;
-  user-select: none;
-}
-
-.zed-editor-column {
-  flex: 1;
-  min-width: 0;
-  display: flex;
+.zed-buffer--cm {
   flex-direction: column;
 }
 
-.zed-editor__beyond {
-  flex: 0 0 auto;
+.zed-cm-host {
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  font-size: var(--c-buffer-size);
-  line-height: var(--c-buffer-line-height);
-  height: max(0px, calc(100cqh - 1lh));
-  cursor: text;
+  height: 100%;
 }
 
-.zed-gutter__line {
-  box-sizing: content-box;
-  height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));
-  padding-right: 12px;
-  color: var(--c-editor-line-number);
-  line-height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));
+.zed-cm-host .cm-editor {
+  height: 100%;
+  background: var(--c-editor);
 }
 
-.zed-gutter[data-wrap="true"] .zed-gutter__line {
-  /* Height is set inline from measured visual rows when wrap is on. */
-  min-height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));
-}
-
-.zed-gutter__line[data-active="true"] {
-  color: var(--c-editor-active-line-number);
-}
-
-.zed-editor__body {
+.cm-md-image {
+  position: relative;
   display: block;
-  box-sizing: content-box;
-  flex: 0 0 auto;
-  min-width: 0;
+  max-width: calc(100% - 28px);
+  margin: 8px 28px 16px 14px;
+  line-height: 0;
+}
+
+.cm-md-image img {
+  display: block;
   width: 100%;
-  /* Height is set in JS from scrollHeight so the buffer (not the textarea) scrolls. */
   height: auto;
-  min-height: calc(1lh);
-  border: 0;
+  border: 1px solid var(--c-border-variant);
+  user-select: none;
+  cursor: pointer;
+}
+
+.cm-md-image__handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--c-border);
+  background: var(--c-elevated);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.cm-md-image__handle:hover,
+.cm-md-image__handle:focus-visible {
+  background: var(--c-text-accent);
+  border-color: var(--c-text-accent);
   outline: none;
-  resize: none;
-  background: transparent;
-  padding: 20px 28px 0 14px;
-  font-family: var(--c-buffer-font);
-  font-size: var(--c-buffer-size);
-  font-weight: 400;
-  line-height: var(--c-buffer-line-height);
-  color: var(--c-editor-fg);
-  caret-color: var(--c-text-accent);
-  tab-size: 4;
-  font-variant-ligatures: contextual;
-  font-feature-settings: "calt" 1;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  overflow: hidden;
-  field-sizing: content;
-}
-
-.zed-editor__body[data-wrap="false"] {
-  white-space: pre;
-  overflow-wrap: normal;
-}
-
-.zed-editor__body::placeholder {
-  color: var(--c-text-placeholder);
 }
 
 .zed-empty {
