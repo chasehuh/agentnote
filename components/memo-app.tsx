@@ -13,10 +13,18 @@ import {
   type Appearance,
   type ThemeId,
 } from "@/lib/themes";
+import {
+  createTabId,
+  openSyncChannel,
+  type SyncMessage,
+} from "@/lib/tab-sync";
 import { PlusIcon, SettingsIcon } from "./icons";
 import { SettingsPanel } from "./settings-panel";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
+
+const POLL_MS = 1500;
+const DRAFT_BROADCAST_MS = 32;
 
 function previewTitle(note: Pick<Note, "title" | "body">) {
   const fromTitle = note.title.trim();
@@ -102,6 +110,85 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
   const skipNextSave = useRef(false);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
+  const tabId = useRef(createTabId());
+  const syncPost = useRef<(message: SyncMessage) => void>(() => {});
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeIdRef = useRef(activeId);
+  const bodyRefState = useRef(body);
+  const saveStateRef = useRef(saveState);
+  const notesRef = useRef(notes);
+
+  activeIdRef.current = activeId;
+  bodyRefState.current = body;
+  saveStateRef.current = saveState;
+  notesRef.current = notes;
+
+  const applyRemoteNote = useCallback((note: Note, opts?: { forceBody?: boolean }) => {
+    setNotes((prev) => {
+      const existing = prev.find((item) => item.id === note.id);
+      if (
+        existing &&
+        new Date(existing.updated_at).getTime() > new Date(note.updated_at).getTime()
+      ) {
+        return prev;
+      }
+      return sortNotesByRecent([
+        note,
+        ...prev.filter((item) => item.id !== note.id),
+      ]);
+    });
+
+    if (activeIdRef.current !== note.id) return;
+    if (
+      !opts?.forceBody &&
+      (saveStateRef.current === "dirty" || saveStateRef.current === "saving")
+    ) {
+      return;
+    }
+    if (bodyRefState.current === note.body) return;
+    skipNextSave.current = true;
+    setBody(note.body);
+    setSaveState("saved");
+  }, []);
+
+  const applyRemoteDraft = useCallback(
+    (payload: Extract<SyncMessage, { type: "draft" }>) => {
+      if (payload.sourceId === tabId.current) return;
+      setNotes((prev) => {
+        const existing = prev.find((item) => item.id === payload.id);
+        if (!existing) return prev;
+        return sortNotesByRecent([
+          {
+            ...existing,
+            title: payload.title,
+            body: payload.body,
+            updated_at: new Date(payload.at).toISOString(),
+          },
+          ...prev.filter((item) => item.id !== payload.id),
+        ]);
+      });
+      if (activeIdRef.current !== payload.id) return;
+      if (bodyRefState.current === payload.body) return;
+      skipNextSave.current = true;
+      setBody(payload.body);
+      setSaveState("saved");
+    },
+    [],
+  );
+
+  const broadcastDraft = useCallback((id: string, nextBody: string) => {
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    draftTimer.current = setTimeout(() => {
+      syncPost.current({
+        type: "draft",
+        sourceId: tabId.current,
+        id,
+        body: nextBody,
+        title: deriveTitle(nextBody),
+        at: Date.now(),
+      });
+    }, DRAFT_BROADCAST_MS);
+  }, []);
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -180,6 +267,11 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
         ]),
       );
       setSaveState("saved");
+      syncPost.current({
+        type: "upsert",
+        sourceId: tabId.current,
+        note: data.note,
+      });
     } catch {
       setSaveState("error");
     }
@@ -194,6 +286,7 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
     if (activeNote && activeNote.body === body) return;
 
     setSaveState("dirty");
+    broadcastDraft(activeId, body);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       void persist(activeId, body);
@@ -202,13 +295,126 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [activeId, body, activeNote, persist]);
+  }, [activeId, body, activeNote, persist, broadcastDraft]);
+
+  const pullFromServer = useCallback(async () => {
+    try {
+      const response = await fetch("/api/notes", { cache: "no-store" });
+      if (!response.ok) return;
+      const data = (await response.json()) as { notes: Note[] };
+      const remoteNotes = data.notes;
+      const localById = new Map(
+        notesRef.current.map((note) => [note.id, note] as const),
+      );
+
+      for (const remote of remoteNotes) {
+        const local = localById.get(remote.id);
+        if (
+          !local ||
+          new Date(remote.updated_at).getTime() >
+            new Date(local.updated_at).getTime()
+        ) {
+          applyRemoteNote(remote);
+        }
+      }
+
+      const remoteIds = new Set(remoteNotes.map((note) => note.id));
+      const missing = notesRef.current.filter((note) => !remoteIds.has(note.id));
+      if (missing.length > 0) {
+        setNotes((prev) =>
+          sortNotesByRecent(prev.filter((note) => remoteIds.has(note.id))),
+        );
+        if (
+          activeIdRef.current &&
+          !remoteIds.has(activeIdRef.current)
+        ) {
+          const fallback = sortNotesByRecent(
+            remoteNotes,
+          )[0] ?? null;
+          if (fallback) {
+            skipNextSave.current = true;
+            setActiveId(fallback.id);
+            setBody(fallback.body);
+            setSaveState("saved");
+          } else {
+            setActiveId(null);
+            setBody("");
+            setSaveState("saved");
+          }
+        }
+      }
+    } catch {
+      // Keep local state if the network blips.
+    }
+  }, [applyRemoteNote]);
+
+  useEffect(() => {
+    const channel = openSyncChannel((message) => {
+      if (message.sourceId === tabId.current) return;
+      if (message.type === "draft") {
+        applyRemoteDraft(message);
+        return;
+      }
+      if (message.type === "upsert") {
+        applyRemoteNote(message.note, { forceBody: true });
+        return;
+      }
+      if (message.type === "delete") {
+        setNotes((prev) => {
+          const next = sortNotesByRecent(
+            prev.filter((note) => note.id !== message.id),
+          );
+          if (activeIdRef.current === message.id) {
+            const fallback = next[0] ?? null;
+            skipNextSave.current = true;
+            if (fallback) {
+              setActiveId(fallback.id);
+              setBody(fallback.body);
+            } else {
+              setActiveId(null);
+              setBody("");
+            }
+            setSaveState("saved");
+          }
+          return next;
+        });
+      }
+    });
+    syncPost.current = channel.post;
+
+    const poll = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void pullFromServer();
+      }
+    }, POLL_MS);
+
+    function onVisible() {
+      if (document.visibilityState === "visible") {
+        void pullFromServer();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+
+    return () => {
+      channel.close();
+      window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      if (draftTimer.current) clearTimeout(draftTimer.current);
+    };
+  }, [applyRemoteDraft, applyRemoteNote, pullFromServer]);
 
   const createNote = useCallback(async () => {
     const response = await fetch("/api/notes", { method: "POST" });
     if (!response.ok) return;
     const data = (await response.json()) as { note: Note };
     setNotes((prev) => sortNotesByRecent([data.note, ...prev]));
+    syncPost.current({
+      type: "upsert",
+      sourceId: tabId.current,
+      note: data.note,
+    });
     selectNote(data.note);
     setSidebarOpen(true);
   }, [selectNote]);
@@ -216,6 +422,11 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
   async function removeNote(id: string) {
     const response = await fetch(`/api/notes/${id}`, { method: "DELETE" });
     if (!response.ok) return;
+    syncPost.current({
+      type: "delete",
+      sourceId: tabId.current,
+      id,
+    });
     setNotes((prev) => {
       const next = sortNotesByRecent(prev.filter((note) => note.id !== id));
       if (activeId === id) {
