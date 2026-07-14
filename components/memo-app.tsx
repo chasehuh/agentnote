@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Note } from "@/lib/types";
 import { substituteAsciiArrows } from "@/lib/arrows";
-import { markdownImage } from "@/lib/media";
+import { extractMarkdownImages, markdownImage } from "@/lib/media";
 import {
   measureWrappedRowCounts,
   unitRowCounts,
@@ -294,6 +294,7 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
 
   const lineCount = Math.max(1, body.split("\n").length);
   const currentLine = activeLineNumber(body, caret);
+  const bodyImages = useMemo(() => extractMarkdownImages(body), [body]);
 
   const insertAtCaret = useCallback((snippet: string) => {
     const textarea = bodyRef.current;
@@ -808,6 +809,22 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
                     spellCheck
                     autoFocus
                   />
+                  {bodyImages.length > 0 ? (
+                    <div className="zed-image-previews">
+                      {bodyImages.map((image) => (
+                        <a
+                          key={`${image.index}-${image.url}`}
+                          className="zed-image-previews__item"
+                          href={image.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={image.url} alt={image.alt || ""} />
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
                   <div
                     className="zed-editor__beyond"
                     aria-hidden

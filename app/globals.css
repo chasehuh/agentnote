@@ -439,6 +439,28 @@ button:disabled {
   cursor: text;
 }
 
+.zed-image-previews {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 28px 24px 14px;
+}
+
+.zed-image-previews__item {
+  display: block;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.zed-image-previews__item img {
+  display: block;
+  max-width: min(100%, 720px);
+  height: auto;
+  border: 1px solid var(--c-border-variant);
+}
+
 .zed-gutter__line {
   box-sizing: content-box;
   height: calc(var(--c-buffer-size) * var(--c-buffer-line-height));

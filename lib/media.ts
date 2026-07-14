@@ -24,6 +24,23 @@ export function markdownImage(url: string, alt = "") {
   return `![${alt}](${url})`;
 }
 
+/** Obsidian/Notion-style image markdown: ![alt](url) */
+export function extractMarkdownImages(text: string): Array<{
+  alt: string;
+  url: string;
+  index: number;
+}> {
+  const out: Array<{ alt: string; url: string; index: number }> = [];
+  const re = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
+  for (const match of text.matchAll(re)) {
+    out.push({
+      alt: match[1] ?? "",
+      url: match[2] ?? "",
+      index: match.index ?? 0,
+    });
+  }
+  return out;
+}
 
 export async function uploadImageBytes(
   bytes: ArrayBuffer,
