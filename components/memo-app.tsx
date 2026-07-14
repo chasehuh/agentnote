@@ -33,6 +33,7 @@ import {
   SidebarLeftClosedIcon,
   SidebarLeftOpenIcon,
 } from "./icons";
+import { ReloadToUpdate } from "./reload-to-update";
 import { SettingsPanel } from "./settings-panel";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
@@ -477,6 +478,14 @@ export function MemoApp({
     });
   }
 
+  const tabTitle = activeId
+    ? previewTitle({ title: deriveTitle(body), body })
+    : "memo";
+
+  useEffect(() => {
+    document.title = tabTitle === "memo" ? "memo" : `${tabTitle} · memo`;
+  }, [tabTitle]);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const meta = event.metaKey || event.ctrlKey;
@@ -516,8 +525,11 @@ export function MemoApp({
             <SidebarLeftClosedIcon size={14} />
           )}
         </button>
-        <span className="zed-titlebar__brand">memo</span>
+        <span className="zed-titlebar__title" title={tabTitle}>
+          {tabTitle}
+        </span>
         <div className="zed-titlebar__spacer" />
+        <ReloadToUpdate />
         <div className="zed-titlebar__account">
           <UserButton
             appearance={{
