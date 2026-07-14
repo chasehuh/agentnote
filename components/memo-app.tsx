@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Note } from "@/lib/types";
 import {
   measureWrappedRowCounts,
@@ -130,6 +130,7 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
   const skipNextSave = useRef(false);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
+  const pendingCaretRef = useRef<number | null>(null);
   const tabId = useRef(createTabId());
   const syncPost = useRef<(message: SyncMessage) => void>(() => {});
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -142,6 +143,13 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
   bodyRefState.current = body;
   saveStateRef.current = saveState;
   notesRef.current = notes;
+
+  useLayoutEffect(() => {
+    if (pendingCaretRef.current == null || !bodyRef.current) return;
+    const pos = pendingCaretRef.current;
+    pendingCaretRef.current = null;
+    bodyRef.current.setSelectionRange(pos, pos);
+  }, [body]);
 
   const applyRemoteNote = useCallback((note: Note, opts?: { forceBody?: boolean }) => {
     setNotes((prev) => {
@@ -658,6 +666,23 @@ export function MemoApp({ initialNotes }: { initialNotes: Note[] }) {
                   onChange={(event) => {
                     setBody(event.target.value);
                     setCaret(event.target.selectionStart);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Tab") return;
+                    if (event.metaKey || event.ctrlKey || event.altKey) return;
+                    // Zed-like hard_tabs: false — Tab inserts spaces; avoid focus steal.
+                    event.preventDefault();
+                    if (event.shiftKey) return;
+
+                    const textarea = event.currentTarget;
+                    const start = textarea.selectionStart;
+                    const end = textarea.selectionEnd;
+                    const spaces = "    ";
+                    const next = body.slice(0, start) + spaces + body.slice(end);
+                    const nextCaret = start + spaces.length;
+                    pendingCaretRef.current = nextCaret;
+                    setBody(next);
+                    setCaret(nextCaret);
                   }}
                   onScroll={syncGutterScroll}
                   onSelect={(event) => {

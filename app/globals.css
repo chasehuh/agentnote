@@ -452,6 +452,8 @@ button:disabled {
   color: var(--c-editor-fg);
   caret-color: var(--c-text-accent);
   tab-size: 4;
+  font-variant-ligatures: contextual;
+  font-feature-settings: "calt" 1;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   overflow: auto;
