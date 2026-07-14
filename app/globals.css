@@ -81,7 +81,7 @@
   /* Zed buffer_line_height: comfortable */
   --c-buffer-line-height: 1.618;
   --c-gutter-w: 48px;
-  --c-panel-w: 260px;
+  --c-panel-w: 240px;
 }
 
 * {
@@ -240,48 +240,51 @@ button:disabled {
 }
 
 .zed-panel__header {
-  height: 32px;
+  height: 28px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px 0 12px;
+  padding: 0 6px 0 10px;
+  background: var(--c-surface);
   border-bottom: 1px solid var(--c-border-variant);
 }
 
 .zed-panel__title {
   color: var(--c-text-muted);
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 .zed-panel__actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 
 .zed-panel__list {
   flex: 1;
   overflow: auto;
-  padding: 8px;
+  padding: 4px 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
 }
 
 .zed-panel__empty {
-  padding: 12px 8px;
+  padding: 10px 12px;
   color: var(--c-text-placeholder);
   font-size: 12px;
 }
 
+/* Dense list rows — Zed ListItem Dense / project panel */
 .zed-note-item {
   position: relative;
   display: block;
-  border-radius: 6px;
+  margin: 0 4px;
+  border-radius: 4px;
 }
 
 .zed-note-item:hover {
@@ -294,23 +297,35 @@ button:disabled {
 
 .zed-note-item__hit {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
   width: 100%;
-  padding: 10px 28px 10px 12px;
+  min-height: 24px;
+  padding: 2px 26px 2px 8px;
   text-align: left;
 }
 
+.zed-note-item__icon {
+  flex-shrink: 0;
+  color: var(--c-text-placeholder);
+}
+
+.zed-note-item[data-active="true"] .zed-note-item__icon,
+.zed-note-item:hover .zed-note-item__icon {
+  color: var(--c-text-muted);
+}
+
 .zed-note-item__title {
-  display: block;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--c-text-muted);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.35;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.3;
 }
 
 .zed-note-item[data-active="true"] .zed-note-item__title,
@@ -319,7 +334,11 @@ button:disabled {
 }
 
 .zed-note-item__date {
-  display: block;
+  flex-shrink: 0;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--c-text-placeholder);
   font-size: 11px;
   line-height: 1.3;
@@ -327,17 +346,16 @@ button:disabled {
 
 .zed-note-item__delete {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
   display: none;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
   color: var(--c-text-placeholder);
-  font-size: 14px;
-  line-height: 1;
 }
 
 .zed-note-item:hover .zed-note-item__delete,
@@ -554,20 +572,21 @@ button:disabled {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  padding: 12px;
+  padding: 4px 6px 6px;
   border-top: 1px solid var(--c-border-variant);
 }
 
 .zed-settings-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
   color: var(--c-text-muted);
   font-size: 12px;
+  font-weight: 400;
 }
 
 .zed-settings-btn:hover,
