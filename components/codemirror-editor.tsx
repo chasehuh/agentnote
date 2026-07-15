@@ -17,10 +17,16 @@ import {
   history,
   historyKeymap,
 } from "@codemirror/commands";
+import { indentUnit } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
 import { arrowInputHandler, arrowPasteFilter } from "@/lib/editor/arrow-input";
 import { imageWidgets } from "@/lib/editor/image-widgets";
 import { agentnoteLineKillKeymap } from "@/lib/editor/line-kill";
+import {
+  agentnoteListIndentOnTab,
+  agentnoteListOutdentOnShiftTab,
+  LIST_INDENT_UNIT,
+} from "@/lib/editor/list-indent";
 import { imagePasteDrop } from "@/lib/editor/paste-images";
 
 type CodeMirrorEditorProps = {
@@ -32,7 +38,7 @@ type CodeMirrorEditorProps = {
 };
 
 function insertSoftTab(view: EditorView) {
-  const spaces = "    ";
+  const spaces = LIST_INDENT_UNIT;
   const { from, to } = view.state.selection.main;
   view.dispatch({
     changes: { from, to, insert: spaces },
@@ -57,12 +63,13 @@ function editorExtensions(
     drawSelection(),
     markdown(),
     placeholder(placeholderText),
+    indentUnit.of(LIST_INDENT_UNIT),
     wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
     keymap.of([
       {
         key: "Tab",
-        run: insertSoftTab,
-        shift: () => true,
+        run: (view) => agentnoteListIndentOnTab(view) || insertSoftTab(view),
+        shift: agentnoteListOutdentOnShiftTab,
       },
       ...historyKeymap,
       ...defaultKeymap.filter((binding) => {

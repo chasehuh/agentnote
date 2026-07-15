@@ -8,7 +8,7 @@ Live: [memo.chasehuh.com](https://memo.chasehuh.com)
 
 - Next.js (App Router) + `proxy.ts` (Next 16)
 - Clerk (`agentnote` app) with **GitHub OAuth** sign-in
-- CodeMirror 6 note editor (Zed-like chrome, soft wrap, Tab→spaces; ⌘⌫ deletes to hard line start, ⇧⌘K deletes the line)
+- CodeMirror 6 note editor (Zed-like chrome, soft wrap, Tab→spaces, Tab indents Markdown list markers; ⌘⌫ deletes to hard line start, ⇧⌘K deletes the line)
 - Postgres (`pg`) — notes scoped by Clerk `user_id`
 - Vercel
 
