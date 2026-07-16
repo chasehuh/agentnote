@@ -200,6 +200,44 @@ button:disabled {
   flex: 1;
 }
 
+.zed-titlebar__brand {
+  flex-shrink: 0;
+  margin-right: 4px;
+  color: var(--c-text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.zed-titlebar__link {
+  flex-shrink: 0;
+  margin-right: 4px;
+  color: var(--c-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.zed-titlebar__link:hover {
+  color: var(--c-text);
+}
+
+.zed-titlebar__publish {
+  width: auto;
+  gap: 5px;
+  padding: 0 8px 0 6px;
+  margin-right: 2px;
+}
+
+.zed-titlebar__publish-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.zed-titlebar__publish[data-active="true"] {
+  color: var(--c-text-accent);
+}
+
 .zed-update {
   display: inline-flex;
   align-items: center;
@@ -474,6 +512,18 @@ button:disabled {
   line-height: 1.35;
 }
 
+.zed-note-item__title[data-public="true"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  margin-bottom: 1px;
+  border-radius: 50%;
+  background: var(--c-text-accent);
+  vertical-align: middle;
+}
+
 .zed-note-item[data-active="true"] .zed-note-item__title,
 .zed-note-item:hover .zed-note-item__title {
   color: var(--c-text);
@@ -685,6 +735,40 @@ button:disabled {
   min-height: 16px;
   color: var(--c-error);
   font-size: 12px;
+}
+
+/* Publish — Zed Share / Notion “anyone with the link” dialog */
+.zed-publish {
+  max-width: 420px;
+}
+
+.zed-publish__link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zed-publish__field {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.zed-publish__status {
+  margin: 12px 0 0;
+  color: var(--c-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.zed-publish .zed-dialog__error {
+  margin-top: 10px;
+}
+
+.zed-publish__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* Zed.dev /sign_up primary GitHub CTA — measured from production styles */

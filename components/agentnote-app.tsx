@@ -28,9 +28,11 @@ import { AccountMenu } from "./account-menu";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import {
   PlusIcon,
+  ShareIcon,
   SidebarLeftClosedIcon,
   SidebarLeftOpenIcon,
 } from "./icons";
+import { PublishPanel } from "./publish-panel";
 import { ReloadToUpdate } from "./reload-to-update";
 import { SettingsPanel } from "./settings-panel";
 
@@ -152,6 +154,7 @@ export function AgentNoteApp({
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
   const [themeId, setThemeId] = useState<ThemeId>(DEFAULT_THEME_ID);
   const [appearance, setAppearance] =
     useState<Appearance>(DEFAULT_APPEARANCE);
@@ -565,6 +568,25 @@ export function AgentNoteApp({
           {tabTitle}
         </span>
         <div className="zed-titlebar__spacer" />
+        {activeId ? (
+          <button
+            type="button"
+            className="zed-icon-btn zed-titlebar__publish"
+            data-active={activeNote?.is_public ? "true" : "false"}
+            onClick={() => setPublishOpen(true)}
+            title={
+              activeNote?.is_public ? "Published — manage link" : "Publish note"
+            }
+            aria-label={
+              activeNote?.is_public ? "Manage published link" : "Publish note"
+            }
+          >
+            <ShareIcon size={14} />
+            <span className="zed-titlebar__publish-label">
+              {activeNote?.is_public ? "Published" : "Publish"}
+            </span>
+          </button>
+        ) : null}
         <ReloadToUpdate />
         <AccountMenu onOpenSettings={() => setSettingsOpen(true)} />
       </header>
@@ -616,7 +638,12 @@ export function AgentNoteApp({
                       className="zed-note-item__hit"
                       onClick={() => selectNote(note)}
                     >
-                      <span className="zed-note-item__title">{label}</span>
+                      <span
+                        className="zed-note-item__title"
+                        data-public={note.is_public ? "true" : undefined}
+                      >
+                        {label}
+                      </span>
                       <span className="zed-note-item__date">{updatedLabel}</span>
                     </button>
                     <button
@@ -681,6 +708,25 @@ export function AgentNoteApp({
         onThemeChange={selectTheme}
         onAppearanceChange={selectAppearance}
         onWrapChange={selectWrap}
+      />
+
+      <PublishPanel
+        open={publishOpen}
+        note={activeNote}
+        onClose={() => setPublishOpen(false)}
+        onNoteChange={(note) => {
+          setNotes((prev) =>
+            sortNotesByRecent([
+              note,
+              ...prev.filter((item) => item.id !== note.id),
+            ]),
+          );
+          syncPost.current({
+            type: "upsert",
+            sourceId: tabId.current,
+            note,
+          });
+        }}
       />
     </div>
   );

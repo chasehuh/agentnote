@@ -138,6 +138,30 @@ export function SignOutIcon({ size = 14, className }: IconProps) {
   );
 }
 
+/** Share / publish mark — link nodes (Zed-adjacent titlebar affordance). */
+export function ShareIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <circle cx="4" cy="8" r="2" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="12" cy="4" r="2" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="12" cy="12" r="2" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M5.8 7.1 10.2 4.9M5.8 8.9l4.4 2.2"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 /** `settings.svg` */
 export function SettingsIcon({ size = 16, className }: IconProps) {
   return (

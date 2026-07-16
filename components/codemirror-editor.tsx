@@ -33,9 +33,11 @@ import { indentedLineWrapping } from "@/lib/editor/wrap-indent";
 type CodeMirrorEditorProps = {
   value: string;
   wrap: boolean;
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
   autoFocus?: boolean;
   placeholderText?: string;
+  /** Published / share view — no edits, no active-line chrome. */
+  readOnly?: boolean;
 };
 
 function insertSoftTab(view: EditorView) {
@@ -53,47 +55,56 @@ function editorExtensions(
   wrap: boolean,
   wrapCompartment: Compartment,
   placeholderText: string,
-  onChangeRef: { current: (value: string) => void },
+  onChangeRef: { current: ((value: string) => void) | undefined },
   applyingExternal: { current: boolean },
+  readOnly: boolean,
 ) {
   return [
     lineNumbers(),
-    highlightActiveLine(),
-    highlightActiveLineGutter(),
-    history(),
+    ...(readOnly
+      ? []
+      : [highlightActiveLine(), highlightActiveLineGutter(), history()]),
     drawSelection(),
     markdown(),
     placeholder(placeholderText),
     indentUnit.of(LIST_INDENT_UNIT),
+    EditorState.readOnly.of(readOnly),
+    EditorView.editable.of(!readOnly),
     // Zed soft_wrap: hang continuations under indent + list marker.
     wrapCompartment.of(
       wrap ? [EditorView.lineWrapping, indentedLineWrapping()] : [],
     ),
-    keymap.of([
-      {
-        key: "Tab",
-        run: (view) => agentnoteListIndentOnTab(view) || insertSoftTab(view),
-        shift: agentnoteListOutdentOnShiftTab,
-      },
-      ...historyKeymap,
-      ...defaultKeymap.filter((binding) => {
-        const key = "key" in binding ? binding.key : null;
-        // Tab overridden above; mac Mod-Backspace replaced by agentnoteLineKillKeymap
-        if (key === "Tab" || key === "Shift-Tab") return false;
-        if ("mac" in binding && binding.mac === "Mod-Backspace") return false;
-        return true;
-      }),
-    ]),
-    agentnoteLineKillKeymap(),
-    Prec.high(arrowInputHandler()),
-    arrowPasteFilter(),
+    ...(readOnly
+      ? []
+      : [
+          keymap.of([
+            {
+              key: "Tab",
+              run: (view) =>
+                agentnoteListIndentOnTab(view) || insertSoftTab(view),
+              shift: agentnoteListOutdentOnShiftTab,
+            },
+            ...historyKeymap,
+            ...defaultKeymap.filter((binding) => {
+              const key = "key" in binding ? binding.key : null;
+              // Tab overridden above; mac Mod-Backspace replaced by agentnoteLineKillKeymap
+              if (key === "Tab" || key === "Shift-Tab") return false;
+              if ("mac" in binding && binding.mac === "Mod-Backspace")
+                return false;
+              return true;
+            }),
+          ]),
+          agentnoteLineKillKeymap(),
+          Prec.high(arrowInputHandler()),
+          arrowPasteFilter(),
+          imagePasteDrop(),
+        ]),
     imageWidgets,
-    imagePasteDrop(),
     // Zed-like one_page: content-only spacer so gutters stay CM-owned geometry
     scrollPastEnd(),
     EditorView.updateListener.of((update) => {
-      if (!update.docChanged || applyingExternal.current) return;
-      onChangeRef.current(update.state.doc.toString());
+      if (readOnly || !update.docChanged || applyingExternal.current) return;
+      onChangeRef.current?.(update.state.doc.toString());
     }),
     EditorView.theme({
       "&": {
@@ -173,6 +184,7 @@ export function CodeMirrorEditor({
   onChange,
   autoFocus = false,
   placeholderText = "Start typing…",
+  readOnly = false,
 }: CodeMirrorEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -194,6 +206,7 @@ export function CodeMirrorEditor({
           placeholderText,
           onChangeRef,
           applyingExternal,
+          readOnly,
         ),
       }),
       parent: hostRef.current,
