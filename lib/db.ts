@@ -150,7 +150,7 @@ export async function ensureSchema() {
         ON note_aliases (note_id);
       `);
 
-      // Publish / anyone-with-the-link share (separate opaque public_id).
+      // Publish / anyone-with-the-link — public_id mirrors note id when live.
       await pool.query(`
         ALTER TABLE notes
           ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE;

@@ -1,7 +1,7 @@
 import { normalizeAuthorHandle } from "./author-handle";
 import { query } from "./db";
 import { createNoteId, normalizeNoteId } from "./note-id";
-import { createPublicId } from "./public-id";
+import { normalizePublicId } from "./public-id";
 import type { Note, PublicNote } from "./types";
 
 export type { Note, PublicNote };
@@ -19,12 +19,13 @@ type NoteRow = {
 };
 
 type PublicNoteRow = {
+  id: string;
   title: string;
   body: string;
   published_at: Date;
   updated_at: Date;
   author_handle: string | null;
-  public_id: string;
+  public_id: string | null;
 };
 
 const NOTE_COLUMNS = `id, title, body, created_at, updated_at,
@@ -46,12 +47,14 @@ function mapNote(row: NoteRow): Note {
 
 function mapPublicNote(row: PublicNoteRow): PublicNote {
   return {
+    id: row.id,
     title: row.title,
     body: row.body,
     published_at: row.published_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
     author_handle: row.author_handle,
-    public_id: row.public_id,
+    /** Path key = private note id; may briefly still be a legacy opaque token. */
+    public_id: row.public_id ?? row.id,
   };
 }
 
@@ -115,17 +118,22 @@ export async function getNote(
   return row ? mapNote(row) : null;
 }
 
-/** Anonymous read — only live published notes. */
+/** Anonymous read — only live published notes (by note id or legacy token). */
 export async function getPublicNote(
-  publicId: string,
+  rawId: string,
 ): Promise<PublicNote | null> {
+  const normalized = normalizePublicId(rawId);
+  if (!normalized) return null;
+  const candidates = Array.from(new Set([normalized, rawId]));
+
   const result = await query<PublicNoteRow>(
-    `SELECT title, body, published_at, updated_at, author_handle, public_id
+    `SELECT id, title, body, published_at, updated_at, author_handle, public_id
      FROM notes
-     WHERE public_id = $1
-       AND is_public = TRUE
-       AND published_at IS NOT NULL`,
-    [publicId],
+     WHERE is_public = TRUE
+       AND published_at IS NOT NULL
+       AND (id = ANY($1::text[]) OR public_id = ANY($1::text[]))
+     LIMIT 1`,
+    [candidates],
   );
   const row = result.rows[0];
   return row ? mapPublicNote(row) : null;
@@ -198,8 +206,8 @@ export async function deleteNote(userId: string, id: string): Promise<boolean> {
 }
 
 /**
- * Turn on anyone-with-the-link access. Mints a new `public_id` when missing
- * (first publish or after hard-revoke unpublish). Stamps author handle for URL.
+ * Turn on anyone-with-the-link access. Public URL uses the same Meet-style
+ * note id as `/n/{id}`; `public_id` is kept in sync for lookups / legacy.
  */
 export async function publishNote(
   userId: string,
@@ -210,36 +218,22 @@ export async function publishNote(
   if (!canonicalId) return null;
   const handle = normalizeAuthorHandle(authorHandle);
 
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const publicId = createPublicId();
-    try {
-      const result = await query<NoteRow>(
-        `UPDATE notes
-         SET is_public = TRUE,
-             public_id = COALESCE(public_id, $3),
-             published_at = COALESCE(published_at, NOW()),
-             author_handle = $4,
-             updated_at = NOW()
-         WHERE id = $1 AND user_id = $2
-         RETURNING ${NOTE_COLUMNS}`,
-        [canonicalId, userId, publicId, handle],
-      );
-      const row = result.rows[0];
-      return row ? mapNote(row) : null;
-    } catch (error) {
-      const code =
-        error && typeof error === "object" && "code" in error
-          ? String((error as { code: unknown }).code)
-          : "";
-      if (code === "23505" && attempt < 4) continue;
-      throw error;
-    }
-  }
-
-  throw new Error("Failed to allocate public id");
+  const result = await query<NoteRow>(
+    `UPDATE notes
+     SET is_public = TRUE,
+         public_id = $1,
+         published_at = COALESCE(published_at, NOW()),
+         author_handle = $3,
+         updated_at = NOW()
+     WHERE id = $1 AND user_id = $2
+     RETURNING ${NOTE_COLUMNS}`,
+    [canonicalId, userId, handle],
+  );
+  const row = result.rows[0];
+  return row ? mapNote(row) : null;
 }
 
-/** Hard revoke: old `/p/...` links stop working. */
+/** Hard revoke: public `/p/...` links stop resolving. */
 export async function unpublishNote(
   userId: string,
   id: string,
@@ -260,43 +254,4 @@ export async function unpublishNote(
   );
   const row = result.rows[0];
   return row ? mapNote(row) : null;
-}
-
-/** Rotate the share token while staying public (leaked-link recovery). */
-export async function rotatePublicId(
-  userId: string,
-  id: string,
-  authorHandle: string | null,
-): Promise<Note | null> {
-  const canonicalId = await resolveCanonicalNoteId(userId, id);
-  if (!canonicalId) return null;
-  const handle = normalizeAuthorHandle(authorHandle);
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const publicId = createPublicId();
-    try {
-      const result = await query<NoteRow>(
-        `UPDATE notes
-         SET public_id = $3,
-             is_public = TRUE,
-             published_at = COALESCE(published_at, NOW()),
-             author_handle = COALESCE($4, author_handle),
-             updated_at = NOW()
-         WHERE id = $1 AND user_id = $2 AND is_public = TRUE
-         RETURNING ${NOTE_COLUMNS}`,
-        [canonicalId, userId, publicId, handle],
-      );
-      const row = result.rows[0];
-      return row ? mapNote(row) : null;
-    } catch (error) {
-      const code =
-        error && typeof error === "object" && "code" in error
-          ? String((error as { code: unknown }).code)
-          : "";
-      if (code === "23505" && attempt < 4) continue;
-      throw error;
-    }
-  }
-
-  throw new Error("Failed to rotate public id");
 }

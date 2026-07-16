@@ -36,7 +36,12 @@ export default async function PublicNoteTokenPage({ params }: Props) {
   if (!note) notFound();
 
   if (note.author_handle) {
-    permanentRedirect(publicNotePath(note.public_id, note.author_handle));
+    permanentRedirect(publicNotePath(note.id, note.author_handle));
+  }
+
+  // Prefer canonical Meet-style note id over a legacy opaque token.
+  if (token !== note.id) {
+    permanentRedirect(publicNotePath(note.id, null));
   }
 
   return (

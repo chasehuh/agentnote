@@ -32,13 +32,9 @@ export function PublishPanel({
 
   if (!open || !note) return null;
 
-  const publicUrl =
-    note.is_public && note.public_id
-      ? `${window.location.origin}${publicNotePath(
-          note.public_id,
-          note.author_handle,
-        )}`
-      : "";
+  const publicUrl = note.is_public
+    ? `${window.location.origin}${publicNotePath(note.id, note.author_handle)}`
+    : "";
 
   async function publish() {
     setBusy(true);
@@ -72,26 +68,6 @@ export function PublishPanel({
       setCopied(false);
     } catch {
       setError("Couldn’t unpublish this note");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function resetLink() {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/notes/${note!.id}/publish`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rotate: true }),
-      });
-      if (!res.ok) throw new Error("Failed to reset link");
-      const data = (await res.json()) as { note: Note };
-      onNoteChange(data.note);
-      setCopied(false);
-    } catch {
-      setError("Couldn’t reset the link");
     } finally {
       setBusy(false);
     }
@@ -150,29 +126,19 @@ export function PublishPanel({
               <button
                 type="button"
                 className="zed-btn"
-                onClick={() => void resetLink()}
+                onClick={() => void unpublish()}
                 disabled={busy}
               >
-                Reset link
+                Unpublish
               </button>
-              <div className="zed-publish__actions">
-                <button
-                  type="button"
-                  className="zed-btn"
-                  onClick={() => void unpublish()}
-                  disabled={busy}
-                >
-                  Unpublish
-                </button>
-                <button
-                  type="button"
-                  className="zed-btn zed-btn-primary"
-                  onClick={onClose}
-                  disabled={busy}
-                >
-                  Done
-                </button>
-              </div>
+              <button
+                type="button"
+                className="zed-btn zed-btn-primary"
+                onClick={onClose}
+                disabled={busy}
+              >
+                Done
+              </button>
             </div>
           </>
         ) : (
