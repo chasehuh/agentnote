@@ -221,27 +221,32 @@ button:disabled {
   color: var(--c-text);
 }
 
+/* Text-only titlebar control — hover pad must wrap the full label width. */
 .zed-titlebar__publish {
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
   height: 22px;
-  width: auto;
-  min-width: 22px;
-  padding: 0 8px 0 6px;
+  padding: 0 8px;
   margin-right: 4px;
-  border: 1px solid var(--c-border);
+  border: 0;
   border-radius: 4px;
-  background: var(--c-element);
-  color: var(--c-text);
+  background: transparent;
+  color: var(--c-text-muted);
   font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  white-space: nowrap;
   flex-shrink: 0;
+  cursor: pointer;
 }
 
 .zed-titlebar__publish:hover:not(:disabled) {
   background: var(--c-element-hover);
+  color: var(--c-text);
 }
 
 .zed-titlebar__publish:disabled {
@@ -249,14 +254,11 @@ button:disabled {
   cursor: default;
 }
 
-.zed-titlebar__publish-label {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
+.zed-titlebar__publish[data-active="true"] {
+  color: var(--c-text-accent);
 }
 
-.zed-titlebar__publish[data-active="true"] {
-  border-color: color-mix(in srgb, var(--c-text-accent) 45%, var(--c-border));
+.zed-titlebar__publish[data-active="true"]:hover:not(:disabled) {
   color: var(--c-text-accent);
 }
 

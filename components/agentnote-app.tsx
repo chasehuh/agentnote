@@ -28,7 +28,6 @@ import { AccountMenu } from "./account-menu";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import {
   PlusIcon,
-  ShareIcon,
   SidebarLeftClosedIcon,
   SidebarLeftOpenIcon,
 } from "./icons";
@@ -581,14 +580,8 @@ export function AgentNoteApp({
                 ? "Published — manage link"
                 : "Publish note"
           }
-          aria-label={
-            activeNote?.is_public ? "Manage published link" : "Publish note"
-          }
         >
-          <ShareIcon size={14} />
-          <span className="zed-titlebar__publish-label">
-            {activeNote?.is_public ? "Published" : "Publish"}
-          </span>
+          {activeNote?.is_public ? "Published" : "Publish"}
         </button>
         <ReloadToUpdate />
         <AccountMenu onOpenSettings={() => setSettingsOpen(true)} />
