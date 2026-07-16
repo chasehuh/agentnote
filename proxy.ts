@@ -3,7 +3,11 @@ import { NextResponse } from "next/server";
 
 /** Login UI only — keep SSO callback public and un-bounced. */
 const isLoginPage = createRouteMatcher(["/login", "/login/"]);
-const isPublicRoute = createRouteMatcher(["/login(.*)", "/api/version"]);
+const isPublicRoute = createRouteMatcher([
+  "/login(.*)",
+  "/p(.*)",
+  "/api/version",
+]);
 const isApiRoute = createRouteMatcher(["/api(.*)"]);
 
 /**

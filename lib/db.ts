@@ -150,6 +150,25 @@ export async function ensureSchema() {
         ON note_aliases (note_id);
       `);
 
+      // Publish / anyone-with-the-link share (separate opaque public_id).
+      await pool.query(`
+        ALTER TABLE notes
+          ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE;
+      `);
+      await pool.query(`
+        ALTER TABLE notes
+          ADD COLUMN IF NOT EXISTS public_id TEXT;
+      `);
+      await pool.query(`
+        ALTER TABLE notes
+          ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+      `);
+      await pool.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS notes_public_id_uidx
+        ON notes (public_id)
+        WHERE public_id IS NOT NULL;
+      `);
+
       await migrateLegacyNoteIds(pool);
     })();
   }
