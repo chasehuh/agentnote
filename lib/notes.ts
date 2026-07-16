@@ -1,5 +1,5 @@
 import { query } from "./db";
-import { createNoteId } from "./note-id";
+import { createNoteId, normalizeNoteId } from "./note-id";
 import type { Note } from "./types";
 
 export type { Note };
@@ -33,15 +33,50 @@ export async function listNotes(userId: string): Promise<Note[]> {
   return result.rows.map(mapNote);
 }
 
+/**
+ * Resolve a path/API id (canonical, hyphenless, UUID, or legacy short)
+ * to the note's current primary key.
+ */
+export async function resolveCanonicalNoteId(
+  userId: string,
+  rawId: string,
+): Promise<string | null> {
+  const normalized = normalizeNoteId(rawId);
+  if (!normalized) return null;
+
+  const candidates = Array.from(new Set([normalized, rawId]));
+
+  const direct = await query<{ id: string }>(
+    `SELECT id FROM notes
+     WHERE user_id = $1 AND id = ANY($2::text[])
+     LIMIT 1`,
+    [userId, candidates],
+  );
+  if (direct.rows[0]) return direct.rows[0].id;
+
+  const viaAlias = await query<{ id: string }>(
+    `SELECT n.id
+     FROM note_aliases a
+     JOIN notes n ON n.id = a.note_id
+     WHERE n.user_id = $1 AND a.alias = ANY($2::text[])
+     LIMIT 1`,
+    [userId, candidates],
+  );
+  return viaAlias.rows[0]?.id ?? null;
+}
+
 export async function getNote(
   userId: string,
   id: string,
 ): Promise<Note | null> {
+  const canonicalId = await resolveCanonicalNoteId(userId, id);
+  if (!canonicalId) return null;
+
   const result = await query<NoteRow>(
     `SELECT id, title, body, created_at, updated_at
      FROM notes
      WHERE id = $1 AND user_id = $2`,
-    [id, userId],
+    [canonicalId, userId],
   );
   const row = result.rows[0];
   return row ? mapNote(row) : null;
@@ -57,7 +92,7 @@ export async function createNote(
   const title = input?.title ?? "";
   const body = input?.body ?? "";
 
-  // Rare primary-key collision: retry with a fresh short id.
+  // Rare primary-key collision: retry with a fresh Meet-style id.
   for (let attempt = 0; attempt < 5; attempt++) {
     const id = createNoteId();
     try {
@@ -86,6 +121,9 @@ export async function updateNote(
   id: string,
   input: { title: string; body: string },
 ): Promise<Note | null> {
+  const canonicalId = await resolveCanonicalNoteId(userId, id);
+  if (!canonicalId) return null;
+
   const result = await query<NoteRow>(
     `UPDATE notes
      SET title = $3,
@@ -93,16 +131,19 @@ export async function updateNote(
          updated_at = NOW()
      WHERE id = $1 AND user_id = $2
      RETURNING id, title, body, created_at, updated_at`,
-    [id, userId, input.title, input.body],
+    [canonicalId, userId, input.title, input.body],
   );
   const row = result.rows[0];
   return row ? mapNote(row) : null;
 }
 
 export async function deleteNote(userId: string, id: string): Promise<boolean> {
+  const canonicalId = await resolveCanonicalNoteId(userId, id);
+  if (!canonicalId) return false;
+
   const result = await query(
     `DELETE FROM notes WHERE id = $1 AND user_id = $2`,
-    [id, userId],
+    [canonicalId, userId],
   );
   return (result.rowCount ?? 0) > 0;
 }

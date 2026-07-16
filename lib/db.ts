@@ -1,4 +1,5 @@
 import { Pool, type QueryResultRow } from "pg";
+import { createNoteId, isCanonicalNoteId } from "./note-id";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -29,6 +30,59 @@ export function getPool() {
   return global.__agentnotePool;
 }
 
+/** Rewrite non–Meet-style PKs to Meet codes; keep aliases so old URLs still resolve. */
+async function migrateLegacyNoteIds(pool: Pool) {
+  const legacy = await pool.query<{ id: string }>(
+    `SELECT id FROM notes
+     WHERE id !~ '^[abcdefghijkmnopqrstuvwxyz]{3}-[abcdefghijkmnopqrstuvwxyz]{4}-[abcdefghijkmnopqrstuvwxyz]{3}$'`,
+  );
+
+  for (const { id: oldId } of legacy.rows) {
+    if (isCanonicalNoteId(oldId)) continue;
+
+    let migrated = false;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const newId = createNoteId();
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const updated = await client.query(
+          `UPDATE notes SET id = $1 WHERE id = $2`,
+          [newId, oldId],
+        );
+        if ((updated.rowCount ?? 0) === 0) {
+          await client.query("ROLLBACK");
+          migrated = true;
+          break;
+        }
+        await client.query(
+          `INSERT INTO note_aliases (alias, note_id)
+           VALUES ($1, $2)
+           ON CONFLICT (alias) DO UPDATE SET note_id = EXCLUDED.note_id`,
+          [oldId, newId],
+        );
+        await client.query("COMMIT");
+        migrated = true;
+        break;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        const code =
+          error && typeof error === "object" && "code" in error
+            ? String((error as { code: unknown }).code)
+            : "";
+        if (code === "23505") continue;
+        console.error("migrate note id failed", { oldId, error });
+        break;
+      } finally {
+        client.release();
+      }
+    }
+    if (!migrated) {
+      console.error("migrate note id exhausted retries", { oldId });
+    }
+  }
+}
+
 export async function ensureSchema() {
   if (!global.__agentnoteSchemaReady) {
     global.__agentnoteSchemaReady = (async () => {
@@ -43,7 +97,7 @@ export async function ensureSchema() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
       `);
-      // Legacy installs used UUID; widen so short nanoid ids can be stored.
+      // Legacy installs used UUID; widen so short / Meet-style ids can be stored.
       await pool.query(`
         DO $$
         BEGIN
@@ -84,6 +138,19 @@ export async function ensureSchema() {
           END IF;
         END $$;
       `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS note_aliases (
+          alias TEXT PRIMARY KEY,
+          note_id TEXT NOT NULL REFERENCES notes(id) ON UPDATE CASCADE ON DELETE CASCADE
+        );
+      `);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS note_aliases_note_id_idx
+        ON note_aliases (note_id);
+      `);
+
+      await migrateLegacyNoteIds(pool);
     })();
   }
   await global.__agentnoteSchemaReady;

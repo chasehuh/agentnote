@@ -1,8 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
+import { permanentRedirect, redirect } from "next/navigation";
 import { AgentNoteApp } from "@/components/agentnote-app";
 import { isValidNoteId } from "@/lib/note-id";
-import { listNotes } from "@/lib/notes";
+import { listNotes, resolveCanonicalNoteId } from "@/lib/notes";
 
 export const dynamic = "force-dynamic";
 
@@ -22,19 +22,23 @@ export default async function NotePage({
     redirect("/");
   }
 
-  const notes = await listNotes(userId);
-  const owned = notes.some((note) => note.id === id);
-
-  // Missing / unauthorized id: fall back to home without crashing.
-  if (!owned) {
+  const canonicalId = await resolveCanonicalNoteId(userId, id);
+  if (!canonicalId) {
     redirect("/");
   }
+
+  // UUID / legacy short / hyphenless → canonical `xxx-xxxx-xxx`.
+  if (id !== canonicalId) {
+    permanentRedirect(`/n/${canonicalId}`);
+  }
+
+  const notes = await listNotes(userId);
 
   return (
     <AgentNoteApp
       initialNotes={notes}
       userId={userId}
-      initialSelectedId={id}
+      initialSelectedId={canonicalId}
     />
   );
 }
