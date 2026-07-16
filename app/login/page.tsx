@@ -1,6 +1,16 @@
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 import { GitHubSignInButton } from "@/components/github-sign-in-button";
 
-export default function LoginPage() {
+export const dynamic = "force-dynamic";
+
+export default async function LoginPage() {
+  const { userId } = await auth();
+  // Defense in depth: proxy already bounces signed-in users off /login.
+  if (userId) {
+    redirect("/");
+  }
+
   return (
     <main className="zed-login">
       <div className="zed-dialog">

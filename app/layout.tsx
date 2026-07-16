@@ -39,7 +39,11 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: faviconBootScript() }} />
       </head>
       <body className="h-full">
-        <ClerkProvider>
+        <ClerkProvider
+          signInFallbackRedirectUrl="/"
+          signUpFallbackRedirectUrl="/"
+          afterSignOutUrl="/login"
+        >
           <ThemeBoot />
           {children}
         </ClerkProvider>
