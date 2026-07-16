@@ -200,15 +200,6 @@ button:disabled {
   flex: 1;
 }
 
-.zed-titlebar__brand {
-  flex-shrink: 0;
-  margin-right: 4px;
-  color: var(--c-text);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
 .zed-titlebar__link {
   flex-shrink: 0;
   margin-right: 4px;
@@ -710,6 +701,21 @@ button.zed-titlebar__publish[data-active="true"]:hover:not(:disabled) {
     max(24px, env(safe-area-inset-bottom, 0px))
     max(24px, env(safe-area-inset-left, 0px));
   background: var(--c-editor);
+}
+
+/* Route loading — flat canvas, no dialog card */
+.zed-loading {
+  min-height: 100%;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  background: var(--c-editor);
+  color: var(--c-text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 
 .zed-dialog {

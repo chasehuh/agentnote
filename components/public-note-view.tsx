@@ -16,7 +16,6 @@ export function PublicNoteView({
   return (
     <div className="zed-shell zed-shell--public">
       <header className="zed-titlebar">
-        <span className="zed-titlebar__brand">agentnote</span>
         <span className="zed-titlebar__title" title={title}>
           {title}
         </span>
