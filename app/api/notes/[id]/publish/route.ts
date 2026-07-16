@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolvePublisherHandle } from "@/lib/clerk-handle";
 import { isValidNoteId } from "@/lib/note-id";
 import {
   publishNote,
@@ -29,10 +30,12 @@ export async function POST(request: Request, { params }: Params) {
     // empty body = plain publish
   }
 
+  const authorHandle = await resolvePublisherHandle();
+
   try {
     const note = rotate
-      ? await rotatePublicId(authResult.userId, id)
-      : await publishNote(authResult.userId, id);
+      ? await rotatePublicId(authResult.userId, id, authorHandle)
+      : await publishNote(authResult.userId, id, authorHandle);
     if (!note) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }

@@ -168,6 +168,10 @@ export async function ensureSchema() {
         ON notes (public_id)
         WHERE public_id IS NOT NULL;
       `);
+      await pool.query(`
+        ALTER TABLE notes
+          ADD COLUMN IF NOT EXISTS author_handle TEXT;
+      `);
 
       await migrateLegacyNoteIds(pool);
     })();

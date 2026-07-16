@@ -1,17 +1,19 @@
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
 import { PublicNoteView } from "@/components/public-note-view";
+import { isValidAuthorHandle, normalizeAuthorHandle } from "@/lib/author-handle";
 import { getPublicNote } from "@/lib/notes";
 import { isValidPublicId, publicNotePath } from "@/lib/public-id";
 import { previewPublicTitle } from "@/lib/public-note-meta";
 
 export const dynamic = "force-dynamic";
 
-type Props = { params: Promise<{ token: string }> };
+type Props = { params: Promise<{ handle: string; token: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { token } = await params;
-  if (!isValidPublicId(token)) {
+  const { handle: rawHandle, token } = await params;
+  const handle = normalizeAuthorHandle(rawHandle);
+  if (!handle || !isValidPublicId(token)) {
     return { title: "Not found", robots: { index: false, follow: false } };
   }
 
@@ -21,21 +23,25 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 
   const title = previewPublicTitle(note.title, note.body);
+  const by = note.author_handle ?? handle;
   return {
-    title: note.author_handle ? `${title} · @${note.author_handle}` : title,
+    title: `${title} · @${by}`,
     robots: { index: false, follow: false },
   };
 }
 
-/** Legacy/share-token-only URL → canonical `/p/{handle}/{token}` when possible. */
-export default async function PublicNoteTokenPage({ params }: Props) {
-  const { token } = await params;
-  if (!isValidPublicId(token)) notFound();
+export default async function PublicNoteHandlePage({ params }: Props) {
+  const { handle: rawHandle, token } = await params;
+  const handle = normalizeAuthorHandle(rawHandle);
+  if (!handle || !isValidAuthorHandle(handle) || !isValidPublicId(token)) {
+    notFound();
+  }
 
   const note = await getPublicNote(token);
   if (!note) notFound();
 
-  if (note.author_handle) {
+  // Token is authoritative; wrong/stale handle → canonical URL.
+  if (note.author_handle && note.author_handle !== handle) {
     permanentRedirect(publicNotePath(note.public_id, note.author_handle));
   }
 
@@ -43,7 +49,7 @@ export default async function PublicNoteTokenPage({ params }: Props) {
     <PublicNoteView
       title={previewPublicTitle(note.title, note.body)}
       body={note.body}
-      authorHandle={null}
+      authorHandle={note.author_handle ?? handle}
     />
   );
 }

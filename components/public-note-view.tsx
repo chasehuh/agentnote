@@ -3,13 +3,15 @@
 import Link from "next/link";
 import { CodeMirrorEditor } from "./codemirror-editor";
 
-/** Anonymous read-only shell for `/p/{token}` — Zed buffer chrome, no sidebar. */
+/** Anonymous read-only shell for `/p/{handle}/{token}` — Zed buffer chrome. */
 export function PublicNoteView({
   title,
   body,
+  authorHandle,
 }: {
   title: string;
   body: string;
+  authorHandle: string | null;
 }) {
   return (
     <div className="zed-shell zed-shell--public">
@@ -18,6 +20,11 @@ export function PublicNoteView({
         <span className="zed-titlebar__title" title={title}>
           {title}
         </span>
+        {authorHandle ? (
+          <span className="zed-titlebar__author" title={`@${authorHandle}`}>
+            @{authorHandle}
+          </span>
+        ) : null}
         <div className="zed-titlebar__spacer" />
         <Link className="zed-titlebar__link" href="/login">
           Sign in
