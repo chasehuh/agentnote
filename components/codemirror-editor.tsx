@@ -28,6 +28,7 @@ import {
   LIST_INDENT_UNIT,
 } from "@/lib/editor/list-indent";
 import { imagePasteDrop } from "@/lib/editor/paste-images";
+import { indentedLineWrapping } from "@/lib/editor/wrap-indent";
 
 type CodeMirrorEditorProps = {
   value: string;
@@ -64,7 +65,10 @@ function editorExtensions(
     markdown(),
     placeholder(placeholderText),
     indentUnit.of(LIST_INDENT_UNIT),
-    wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
+    // Zed soft_wrap: hang continuations under indent + list marker.
+    wrapCompartment.of(
+      wrap ? [EditorView.lineWrapping, indentedLineWrapping()] : [],
+    ),
     keymap.of([
       {
         key: "Tab",
@@ -211,7 +215,7 @@ export function CodeMirrorEditor({
     if (!view) return;
     view.dispatch({
       effects: wrapCompartment.current.reconfigure(
-        wrap ? EditorView.lineWrapping : [],
+        wrap ? [EditorView.lineWrapping, indentedLineWrapping()] : [],
       ),
     });
   }, [wrap]);
