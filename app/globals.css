@@ -523,7 +523,6 @@ button:disabled {
   background: var(--c-text-accent);
   vertical-align: middle;
 }
-}
 
 .zed-note-item[data-active="true"] .zed-note-item__title,
 .zed-note-item:hover .zed-note-item__title {
