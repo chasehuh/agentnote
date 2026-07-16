@@ -6,15 +6,19 @@ export type Note = {
   updated_at: string;
   /** True when a public `/p/...` link is live. */
   is_public: boolean;
-  /** Unguessable share token; null when unpublished / never published. */
+  /**
+   * Share lookup key — same as `id` (Meet-style) when published.
+   * Older rows may still hold a legacy opaque token until republished.
+   */
   public_id: string | null;
   published_at: string | null;
-  /** Creator handle stamped at publish (for `/p/{handle}/{token}`). */
+  /** Creator handle stamped at publish (for `/p/{handle}/{id}`). */
   author_handle: string | null;
 };
 
-/** Anonymous payload for published notes (no owner / private id). */
+/** Anonymous payload for published notes (no owner user id). */
 export type PublicNote = {
+  id: string;
   title: string;
   body: string;
   published_at: string;

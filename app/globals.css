@@ -221,8 +221,9 @@ button:disabled {
   color: var(--c-text);
 }
 
-/* Text-only titlebar control — hover pad must wrap the full label width. */
-.zed-titlebar__publish {
+/* Text-only titlebar control — no icon; hover pad wraps the full label. */
+button.zed-titlebar__publish {
+  all: unset;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
@@ -230,35 +231,33 @@ button:disabled {
   height: 22px;
   padding: 0 8px;
   margin-right: 4px;
-  border: 0;
   border-radius: 4px;
-  background: transparent;
   color: var(--c-text-muted);
   font-family: inherit;
   font-size: 12px;
   font-weight: 500;
   letter-spacing: -0.01em;
-  line-height: 1;
+  line-height: 22px;
   white-space: nowrap;
   flex-shrink: 0;
   cursor: pointer;
 }
 
-.zed-titlebar__publish:hover:not(:disabled) {
+button.zed-titlebar__publish:hover:not(:disabled) {
   background: var(--c-element-hover);
   color: var(--c-text);
 }
 
-.zed-titlebar__publish:disabled {
+button.zed-titlebar__publish:disabled {
   opacity: 0.45;
   cursor: default;
 }
 
-.zed-titlebar__publish[data-active="true"] {
+button.zed-titlebar__publish[data-active="true"] {
   color: var(--c-text-accent);
 }
 
-.zed-titlebar__publish[data-active="true"]:hover:not(:disabled) {
+button.zed-titlebar__publish[data-active="true"]:hover:not(:disabled) {
   color: var(--c-text-accent);
 }
 

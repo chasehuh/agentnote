@@ -40,9 +40,14 @@ export default async function PublicNoteHandlePage({ params }: Props) {
   const note = await getPublicNote(token);
   if (!note) notFound();
 
-  // Token is authoritative; wrong/stale handle → canonical URL.
+  // Note id is authoritative; wrong/stale handle → canonical URL.
   if (note.author_handle && note.author_handle !== handle) {
-    permanentRedirect(publicNotePath(note.public_id, note.author_handle));
+    permanentRedirect(publicNotePath(note.id, note.author_handle));
+  }
+
+  // Prefer Meet-style note id in the path over a legacy opaque token.
+  if (token !== note.id) {
+    permanentRedirect(publicNotePath(note.id, note.author_handle ?? handle));
   }
 
   return (
