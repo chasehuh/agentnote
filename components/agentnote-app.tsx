@@ -24,8 +24,10 @@ import {
   type Appearance,
   type ThemeId,
 } from "@/lib/themes";
+import { ARCHIVE_RETENTION_DAYS, daysUntilArchivePurge } from "@/lib/archive";
 import { AccountMenu } from "./account-menu";
 import { CodeMirrorEditor } from "./codemirror-editor";
+import { ConfirmDialog } from "./confirm-dialog";
 import {
   PlusIcon,
   SidebarLeftClosedIcon,
@@ -64,6 +66,14 @@ function sortNotesByRecent(notes: Note[]) {
     (a, b) =>
       new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
   );
+}
+
+function sortArchivedByDeleted(notes: Note[]) {
+  return [...notes].sort((a, b) => {
+    const aMs = a.deleted_at ? new Date(a.deleted_at).getTime() : 0;
+    const bMs = b.deleted_at ? new Date(b.deleted_at).getTime() : 0;
+    return bMs - aMs;
+  });
 }
 
 function formatUpdatedAt(value: string) {
@@ -143,6 +153,11 @@ export function AgentNoteApp({
   initialSelectedId?: string;
 }) {
   const [notes, setNotes] = useState(() => sortNotesByRecent(initialNotes));
+  const [archivedNotes, setArchivedNotes] = useState<Note[]>([]);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [pendingArchive, setPendingArchive] = useState<Note | null>(null);
+  const [pendingPermanent, setPendingPermanent] = useState<Note | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(() => {
     return resolveInitialNote(initialNotes, initialSelectedId)?.id ?? null;
   });
@@ -371,9 +386,12 @@ export function AgentNoteApp({
 
   const pullFromServer = useCallback(async () => {
     try {
-      const response = await fetch("/api/notes", { cache: "no-store" });
-      if (!response.ok) return;
-      const data = (await response.json()) as { notes: Note[] };
+      const [liveRes, archivedRes] = await Promise.all([
+        fetch("/api/notes", { cache: "no-store" }),
+        fetch("/api/notes?archived=1", { cache: "no-store" }),
+      ]);
+      if (!liveRes.ok) return;
+      const data = (await liveRes.json()) as { notes: Note[] };
       const remoteNotes = data.notes;
       const localById = new Map(
         notesRef.current.map((note) => [note.id, note] as const),
@@ -415,6 +433,11 @@ export function AgentNoteApp({
           }
         }
       }
+
+      if (archivedRes.ok) {
+        const archivedData = (await archivedRes.json()) as { notes: Note[] };
+        setArchivedNotes(sortArchivedByDeleted(archivedData.notes));
+      }
     } catch {
       // Keep local state if the network blips.
     }
@@ -428,6 +451,42 @@ export function AgentNoteApp({
         return;
       }
       if (message.type === "upsert") {
+        applyRemoteNote(message.note, { forceBody: true });
+        return;
+      }
+      if (message.type === "archive") {
+        setNotes((prev) => {
+          const next = sortNotesByRecent(
+            prev.filter((note) => note.id !== message.note.id),
+          );
+          if (activeIdRef.current === message.note.id) {
+            const fallback = next[0] ?? null;
+            skipNextSave.current = true;
+            if (fallback) {
+              setActiveId(fallback.id);
+              setBody(substituteAsciiArrows(fallback.body).text);
+              replaceNoteUrl(fallback.id);
+            } else {
+              setActiveId(null);
+              setBody("");
+              replaceNoteUrl(null);
+            }
+            setSaveState("saved");
+          }
+          return next;
+        });
+        setArchivedNotes((prev) =>
+          sortArchivedByDeleted([
+            message.note,
+            ...prev.filter((note) => note.id !== message.note.id),
+          ]),
+        );
+        return;
+      }
+      if (message.type === "restore") {
+        setArchivedNotes((prev) =>
+          prev.filter((note) => note.id !== message.note.id),
+        );
         applyRemoteNote(message.note, { forceBody: true });
         return;
       }
@@ -452,6 +511,9 @@ export function AgentNoteApp({
           }
           return next;
         });
+        setArchivedNotes((prev) =>
+          prev.filter((note) => note.id !== message.id),
+        );
       }
     }, userId);
     syncPost.current = channel.post;
@@ -493,26 +555,104 @@ export function AgentNoteApp({
     if (!isNarrowViewport()) setSidebarOpen(true);
   }, [selectNote]);
 
-  async function removeNote(id: string) {
-    const response = await fetch(`/api/notes/${id}`, { method: "DELETE" });
-    if (!response.ok) return;
-    syncPost.current({
-      type: "delete",
-      sourceId: tabId.current,
-      id,
-    });
-    setNotes((prev) => {
-      const next = sortNotesByRecent(prev.filter((note) => note.id !== id));
-      if (activeId === id) {
-        const fallback = next[0] ?? null;
-        if (fallback) {
-          selectNote(fallback);
-        } else {
-          clearActiveNote();
+  function requestArchive(note: Note) {
+    setPendingArchive(note);
+  }
+
+  async function confirmArchive() {
+    if (!pendingArchive) return;
+    setConfirmBusy(true);
+    try {
+      const response = await fetch(`/api/notes/${pendingArchive.id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) return;
+      const data = (await response.json()) as { note?: Note };
+      const archived =
+        data.note ??
+        ({
+          ...pendingArchive,
+          deleted_at: new Date().toISOString(),
+          is_public: false,
+          public_id: null,
+          published_at: null,
+          author_handle: null,
+        } satisfies Note);
+      const id = archived.id;
+      syncPost.current({
+        type: "archive",
+        sourceId: tabId.current,
+        note: archived,
+      });
+      setNotes((prev) => {
+        const next = sortNotesByRecent(prev.filter((note) => note.id !== id));
+        if (activeIdRef.current === id) {
+          const fallback = next[0] ?? null;
+          if (fallback) {
+            selectNote(fallback);
+          } else {
+            clearActiveNote();
+          }
         }
-      }
-      return next;
+        return next;
+      });
+      setArchivedNotes((prev) =>
+        sortArchivedByDeleted([
+          archived,
+          ...prev.filter((note) => note.id !== id),
+        ]),
+      );
+      setArchivedOpen(true);
+    } finally {
+      setConfirmBusy(false);
+      setPendingArchive(null);
+    }
+  }
+
+  async function restoreArchived(note: Note) {
+    const response = await fetch(`/api/notes/${note.id}/restore`, {
+      method: "POST",
     });
+    if (!response.ok) return;
+    const data = (await response.json()) as { note: Note };
+    syncPost.current({
+      type: "restore",
+      sourceId: tabId.current,
+      note: data.note,
+    });
+    setArchivedNotes((prev) => prev.filter((item) => item.id !== data.note.id));
+    setNotes((prev) =>
+      sortNotesByRecent([
+        data.note,
+        ...prev.filter((item) => item.id !== data.note.id),
+      ]),
+    );
+    selectNote(data.note);
+  }
+
+  function requestPermanentDelete(note: Note) {
+    setPendingPermanent(note);
+  }
+
+  async function confirmPermanentDelete() {
+    if (!pendingPermanent) return;
+    setConfirmBusy(true);
+    try {
+      const id = pendingPermanent.id;
+      const response = await fetch(`/api/notes/${id}?permanent=1`, {
+        method: "DELETE",
+      });
+      if (!response.ok) return;
+      syncPost.current({
+        type: "delete",
+        sourceId: tabId.current,
+        id,
+      });
+      setArchivedNotes((prev) => prev.filter((note) => note.id !== id));
+    } finally {
+      setConfirmBusy(false);
+      setPendingPermanent(null);
+    }
   }
 
   const tabTitle = activeId
@@ -645,8 +785,11 @@ export function AgentNoteApp({
                     <button
                       type="button"
                       className="zed-note-item__delete"
-                      onClick={() => void removeNote(note.id)}
-                      aria-label="Delete note"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        requestArchive(note);
+                      }}
+                      aria-label="Archive note"
                     >
                       ×
                     </button>
@@ -655,6 +798,56 @@ export function AgentNoteApp({
               })
             )}
           </nav>
+          {archivedNotes.length > 0 ? (
+            <div className="zed-panel__archived">
+              <button
+                type="button"
+                className="zed-panel__archived-toggle"
+                onClick={() => setArchivedOpen((value) => !value)}
+                aria-expanded={archivedOpen}
+              >
+                <span>Archived</span>
+                <span>{archivedNotes.length}</span>
+              </button>
+              {archivedOpen ? (
+                <div className="zed-panel__archived-list">
+                  {archivedNotes.map((note) => {
+                    const daysLeft = note.deleted_at
+                      ? daysUntilArchivePurge(note.deleted_at)
+                      : ARCHIVE_RETENTION_DAYS;
+                    return (
+                      <div key={note.id} className="zed-note-item">
+                        <div className="zed-note-item__hit" style={{ cursor: "default" }}>
+                          <span className="zed-note-item__title">
+                            {previewTitle(note)}
+                          </span>
+                          <span className="zed-note-item__meta">
+                            Deletes in {daysLeft}d
+                          </span>
+                        </div>
+                        <div className="zed-note-item__actions">
+                          <button
+                            type="button"
+                            className="zed-note-item__restore"
+                            onClick={() => void restoreArchived(note)}
+                          >
+                            Restore
+                          </button>
+                          <button
+                            type="button"
+                            className="zed-note-item__purge"
+                            onClick={() => requestPermanentDelete(note)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </aside>
 
         <section className="zed-center">
@@ -723,6 +916,31 @@ export function AgentNoteApp({
             note,
           });
         }}
+      />
+
+      <ConfirmDialog
+        open={pendingArchive !== null}
+        title="Move to Archived?"
+        description={`You can restore “${pendingArchive ? previewTitle(pendingArchive) : "this note"}” for ${ARCHIVE_RETENTION_DAYS} days.`}
+        confirmLabel="Archive"
+        busy={confirmBusy}
+        onCancel={() => {
+          if (!confirmBusy) setPendingArchive(null);
+        }}
+        onConfirm={() => void confirmArchive()}
+      />
+
+      <ConfirmDialog
+        open={pendingPermanent !== null}
+        title="Delete forever?"
+        description={`“${pendingPermanent ? previewTitle(pendingPermanent) : "This note"}” will be permanently deleted. This cannot be undone.`}
+        confirmLabel="Delete forever"
+        danger
+        busy={confirmBusy}
+        onCancel={() => {
+          if (!confirmBusy) setPendingPermanent(null);
+        }}
+        onConfirm={() => void confirmPermanentDelete()}
       />
     </div>
   );

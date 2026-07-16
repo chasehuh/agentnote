@@ -173,6 +173,22 @@ export async function ensureSchema() {
           ADD COLUMN IF NOT EXISTS author_handle TEXT;
       `);
 
+      // Soft-delete / Archived (Recently Deleted).
+      await pool.query(`
+        ALTER TABLE notes
+          ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      `);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS notes_user_live_updated_at_idx
+        ON notes (user_id, updated_at DESC)
+        WHERE deleted_at IS NULL;
+      `);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS notes_user_deleted_at_idx
+        ON notes (user_id, deleted_at DESC)
+        WHERE deleted_at IS NOT NULL;
+      `);
+
       await migrateLegacyNoteIds(pool);
     })();
   }

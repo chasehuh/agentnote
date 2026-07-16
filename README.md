@@ -71,9 +71,32 @@ ALTER TABLE notes ALTER COLUMN user_id SET NOT NULL;
 
 (`ensureSchema` will set `NOT NULL` automatically once no nulls remain.)
 
+### Archived notes (soft-delete)
+
+Sidebar `×` asks for confirmation, then moves the note to **Archived** (`deleted_at`).
+
+- Restore from the Archived section within **30 days**.
+- Delete forever from Archived (second confirm) hard-deletes the row.
+- Archiving a published note unpublishes it; restore does not re-publish.
+- Nightly Vercel Cron `GET /api/cron/purge-archived` (Bearer `CRON_SECRET`) hard-deletes expired archive rows. Listing Archived also opportunistically purges.
+
+Set on Vercel Production:
+
+```bash
+CRON_SECRET=<long-random-string>
+```
+
+### Railway Postgres backups (ops)
+
+Product trash recovers user mistakes. For disasters (volume wipe / bad restore), enable **daily volume backups** on the Railway Postgres service:
+
+1. Railway → project → Postgres → **Backups** → schedule **Daily**.
+2. Optionally create a manual backup after enabling.
+3. Restoring a volume backup stages a new volume and rewinds the **entire** database — use for disasters, not single-note recovery ([Railway volume backups](https://docs.railway.com/volumes/backups)).
+
 ## Deploy
 
-Point the project at Vercel, set the Clerk + `DATABASE_URL` env vars for Production, attach `memo.chasehuh.com`, and complete the production GitHub OAuth App steps above.
+Point the project at Vercel, set the Clerk + `DATABASE_URL` (+ `CRON_SECRET`) env vars for Production, attach `memo.chasehuh.com`, and complete the production GitHub OAuth App steps above.
 
 ## License
 

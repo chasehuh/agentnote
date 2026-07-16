@@ -17,9 +17,20 @@ export type SyncMessage =
       note: Note;
     }
   | {
+      /** Leave the main Notes list (soft-archive or permanent). */
       type: "delete";
       sourceId: string;
       id: string;
+    }
+  | {
+      type: "archive";
+      sourceId: string;
+      note: Note;
+    }
+  | {
+      type: "restore";
+      sourceId: string;
+      note: Note;
     };
 
 export function createTabId() {

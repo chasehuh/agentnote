@@ -7,6 +7,8 @@ const isPublicRoute = createRouteMatcher([
   "/login(.*)",
   "/p(.*)",
   "/api/version",
+  // Bearer CRON_SECRET checked inside the route.
+  "/api/cron(.*)",
 ]);
 const isApiRoute = createRouteMatcher(["/api(.*)"]);
 

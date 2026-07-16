@@ -4,6 +4,11 @@ export type Note = {
   body: string;
   created_at: string;
   updated_at: string;
+  /**
+   * Soft-delete timestamp. Null = live note.
+   * Non-null = Archived (Recently Deleted); purged after retention.
+   */
+  deleted_at: string | null;
   /** True when a public `/p/...` link is live. */
   is_public: boolean;
   /**

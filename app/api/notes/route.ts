@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
-import { createNote, listNotes } from "@/lib/notes";
+import { createNote, listArchivedNotes, listNotes } from "@/lib/notes";
 import { requireUserId } from "@/lib/require-user";
 
-export async function GET() {
+export async function GET(request: Request) {
   const authResult = await requireUserId();
   if ("error" in authResult) return authResult.error;
 
   try {
-    const notes = await listNotes(authResult.userId);
+    const archived =
+      new URL(request.url).searchParams.get("archived") === "1";
+    const notes = archived
+      ? await listArchivedNotes(authResult.userId)
+      : await listNotes(authResult.userId);
     return NextResponse.json({ notes });
   } catch (error) {
     console.error("list notes failed", error);

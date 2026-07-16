@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { isValidNoteId } from "@/lib/note-id";
-import { deleteNote, getNote, updateNote } from "@/lib/notes";
+import {
+  archiveNote,
+  getNote,
+  permanentlyDeleteNote,
+  updateNote,
+} from "@/lib/notes";
 import { requireUserId } from "@/lib/require-user";
 
 type Params = { params: Promise<{ id: string }> };
@@ -52,18 +57,30 @@ export async function PUT(request: Request, { params }: Params) {
   }
 }
 
-export async function DELETE(_request: Request, { params }: Params) {
+export async function DELETE(request: Request, { params }: Params) {
   const authResult = await requireUserId();
   if ("error" in authResult) return authResult.error;
 
   const { id } = await params;
   if (!isValidNoteId(id)) return invalidIdResponse();
+
+  const permanent =
+    new URL(request.url).searchParams.get("permanent") === "1";
+
   try {
-    const ok = await deleteNote(authResult.userId, id);
-    if (!ok) {
+    if (permanent) {
+      const ok = await permanentlyDeleteNote(authResult.userId, id);
+      if (!ok) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      return NextResponse.json({ ok: true, permanent: true });
+    }
+
+    const note = await archiveNote(authResult.userId, id);
+    if (!note) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, note });
   } catch (error) {
     console.error("delete note failed", error);
     return NextResponse.json({ error: "Failed to delete note" }, { status: 500 });
