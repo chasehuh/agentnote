@@ -1,3 +1,4 @@
+import { normalizeAuthorHandle } from "./author-handle";
 import { query } from "./db";
 import { createNoteId, normalizeNoteId } from "./note-id";
 import { createPublicId } from "./public-id";
@@ -14,6 +15,7 @@ type NoteRow = {
   is_public: boolean;
   public_id: string | null;
   published_at: Date | null;
+  author_handle: string | null;
 };
 
 type PublicNoteRow = {
@@ -21,10 +23,12 @@ type PublicNoteRow = {
   body: string;
   published_at: Date;
   updated_at: Date;
+  author_handle: string | null;
+  public_id: string;
 };
 
 const NOTE_COLUMNS = `id, title, body, created_at, updated_at,
-  is_public, public_id, published_at`;
+  is_public, public_id, published_at, author_handle`;
 
 function mapNote(row: NoteRow): Note {
   return {
@@ -36,6 +40,7 @@ function mapNote(row: NoteRow): Note {
     is_public: Boolean(row.is_public),
     public_id: row.public_id,
     published_at: row.published_at ? row.published_at.toISOString() : null,
+    author_handle: row.author_handle,
   };
 }
 
@@ -45,6 +50,8 @@ function mapPublicNote(row: PublicNoteRow): PublicNote {
     body: row.body,
     published_at: row.published_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
+    author_handle: row.author_handle,
+    public_id: row.public_id,
   };
 }
 
@@ -113,7 +120,7 @@ export async function getPublicNote(
   publicId: string,
 ): Promise<PublicNote | null> {
   const result = await query<PublicNoteRow>(
-    `SELECT title, body, published_at, updated_at
+    `SELECT title, body, published_at, updated_at, author_handle, public_id
      FROM notes
      WHERE public_id = $1
        AND is_public = TRUE
@@ -192,14 +199,16 @@ export async function deleteNote(userId: string, id: string): Promise<boolean> {
 
 /**
  * Turn on anyone-with-the-link access. Mints a new `public_id` when missing
- * (first publish or after hard-revoke unpublish).
+ * (first publish or after hard-revoke unpublish). Stamps author handle for URL.
  */
 export async function publishNote(
   userId: string,
   id: string,
+  authorHandle: string | null,
 ): Promise<Note | null> {
   const canonicalId = await resolveCanonicalNoteId(userId, id);
   if (!canonicalId) return null;
+  const handle = normalizeAuthorHandle(authorHandle);
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const publicId = createPublicId();
@@ -209,10 +218,11 @@ export async function publishNote(
          SET is_public = TRUE,
              public_id = COALESCE(public_id, $3),
              published_at = COALESCE(published_at, NOW()),
+             author_handle = $4,
              updated_at = NOW()
          WHERE id = $1 AND user_id = $2
          RETURNING ${NOTE_COLUMNS}`,
-        [canonicalId, userId, publicId],
+        [canonicalId, userId, publicId, handle],
       );
       const row = result.rows[0];
       return row ? mapNote(row) : null;
@@ -242,6 +252,7 @@ export async function unpublishNote(
      SET is_public = FALSE,
          public_id = NULL,
          published_at = NULL,
+         author_handle = NULL,
          updated_at = NOW()
      WHERE id = $1 AND user_id = $2
      RETURNING ${NOTE_COLUMNS}`,
@@ -255,9 +266,11 @@ export async function unpublishNote(
 export async function rotatePublicId(
   userId: string,
   id: string,
+  authorHandle: string | null,
 ): Promise<Note | null> {
   const canonicalId = await resolveCanonicalNoteId(userId, id);
   if (!canonicalId) return null;
+  const handle = normalizeAuthorHandle(authorHandle);
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const publicId = createPublicId();
@@ -267,10 +280,11 @@ export async function rotatePublicId(
          SET public_id = $3,
              is_public = TRUE,
              published_at = COALESCE(published_at, NOW()),
+             author_handle = COALESCE($4, author_handle),
              updated_at = NOW()
          WHERE id = $1 AND user_id = $2 AND is_public = TRUE
          RETURNING ${NOTE_COLUMNS}`,
-        [canonicalId, userId, publicId],
+        [canonicalId, userId, publicId, handle],
       );
       const row = result.rows[0];
       return row ? mapNote(row) : null;

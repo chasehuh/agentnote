@@ -34,7 +34,10 @@ export function PublishPanel({
 
   const publicUrl =
     note.is_public && note.public_id
-      ? `${window.location.origin}${publicNotePath(note.public_id)}`
+      ? `${window.location.origin}${publicNotePath(
+          note.public_id,
+          note.author_handle,
+        )}`
       : "";
 
   async function publish() {

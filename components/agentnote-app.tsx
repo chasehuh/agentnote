@@ -568,25 +568,28 @@ export function AgentNoteApp({
           {tabTitle}
         </span>
         <div className="zed-titlebar__spacer" />
-        {activeId ? (
-          <button
-            type="button"
-            className="zed-icon-btn zed-titlebar__publish"
-            data-active={activeNote?.is_public ? "true" : "false"}
-            onClick={() => setPublishOpen(true)}
-            title={
-              activeNote?.is_public ? "Published — manage link" : "Publish note"
-            }
-            aria-label={
-              activeNote?.is_public ? "Manage published link" : "Publish note"
-            }
-          >
-            <ShareIcon size={14} />
-            <span className="zed-titlebar__publish-label">
-              {activeNote?.is_public ? "Published" : "Publish"}
-            </span>
-          </button>
-        ) : null}
+        <button
+          type="button"
+          className="zed-titlebar__publish"
+          data-active={activeNote?.is_public ? "true" : "false"}
+          onClick={() => setPublishOpen(true)}
+          disabled={!activeId}
+          title={
+            !activeId
+              ? "Open a note to publish"
+              : activeNote?.is_public
+                ? "Published — manage link"
+                : "Publish note"
+          }
+          aria-label={
+            activeNote?.is_public ? "Manage published link" : "Publish note"
+          }
+        >
+          <ShareIcon size={14} />
+          <span className="zed-titlebar__publish-label">
+            {activeNote?.is_public ? "Published" : "Publish"}
+          </span>
+        </button>
         <ReloadToUpdate />
         <AccountMenu onOpenSettings={() => setSettingsOpen(true)} />
       </header>
