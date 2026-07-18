@@ -1,15 +1,30 @@
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import {
+  HighlightStyle,
+  ensureSyntaxTree,
+  syntaxHighlighting,
+  syntaxTree,
+} from "@codemirror/language";
 import {
   EditorSelection,
+  EditorState,
   Prec,
+  RangeSetBuilder,
+  StateField,
   type Extension,
   type TransactionSpec,
 } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import {
+  Decoration,
+  EditorView,
+  keymap,
+  type DecorationSet,
+} from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { Strikethrough } from "@lezer/markdown";
 
 const MARK = "~~";
+
+const hideMark = Decoration.replace({});
 
 /**
  * Toggle GFM `~~strikethrough~~` on every selection range.
@@ -17,6 +32,8 @@ const MARK = "~~";
  * - Non-empty selection already wrapped (or with markers just outside) → unwrap
  * - Non-empty selection otherwise → wrap
  * - Empty caret → insert `~~~~` with the caret between the marks
+ *
+ * Dispatched as a single `input` history event so Cmd/Ctrl+Z undoes it.
  */
 export function toggleStrikethrough(view: EditorView): boolean {
   if (view.state.readOnly || view.composing) return false;
@@ -77,23 +94,53 @@ export function toggleStrikethrough(view: EditorView): boolean {
   return true;
 }
 
-/** Visual line-through for parsed GFM strikethrough spans. */
+/** Hide `~~` markers visually; document text is unchanged so undo still works. */
+function buildHiddenMarks(state: EditorState): DecorationSet {
+  // Finish parse before decorating so marks hide on the same frame as wrap.
+  ensureSyntaxTree(state, state.doc.length, 50);
+  const builder = new RangeSetBuilder<Decoration>();
+  syntaxTree(state).iterate({
+    enter(node) {
+      if (node.name !== "StrikethroughMark") return;
+      builder.add(node.from, node.to, hideMark);
+    },
+  });
+  return builder.finish();
+}
+
+const hiddenStrikethroughMarks = StateField.define<DecorationSet>({
+  create: buildHiddenMarks,
+  update(deco, tr) {
+    if (tr.docChanged) return buildHiddenMarks(tr.state);
+    return deco.map(tr.changes);
+  },
+  provide: (field) => [
+    EditorView.decorations.from(field),
+    // Skip caret into invisible `~~` so arrow keys don't land on hidden marks.
+    EditorView.atomicRanges.of((view) => view.state.field(field)),
+  ],
+});
+
+/** Visual line-through for parsed GFM strikethrough spans (markers hidden). */
 export function agentnoteStrikethroughHighlight(): Extension {
-  return syntaxHighlighting(
-    HighlightStyle.define([
-      {
-        tag: tags.strikethrough,
-        textDecoration: "line-through",
-        color: "var(--c-text-muted)",
-      },
-    ]),
-  );
+  return [
+    syntaxHighlighting(
+      HighlightStyle.define([
+        {
+          tag: tags.strikethrough,
+          textDecoration: "line-through",
+          color: "var(--c-text-muted)",
+        },
+      ]),
+    ),
+    hiddenStrikethroughMarks,
+  ];
 }
 
 /** Parser extension so `~~…~~` is recognized as GFM strikethrough. */
 export const agentnoteStrikethroughMarkdown = Strikethrough;
 
-/** ⌘⇧X / Ctrl+Shift+X — Notion/Slack-style strikethrough toggle. */
+/** Cmd+Shift+X / Ctrl+Shift+X — Notion/Slack-style strikethrough toggle. */
 export function agentnoteStrikethroughKeymap(): Extension {
   return Prec.high(
     keymap.of([
