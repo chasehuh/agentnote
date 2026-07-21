@@ -22,6 +22,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { arrowInputHandler, arrowPasteFilter } from "@/lib/editor/arrow-input";
 import { imageWidgets } from "@/lib/editor/image-widgets";
 import { agentnoteLineKillKeymap } from "@/lib/editor/line-kill";
+import { agentnoteInsertNewlineContinueMarkup } from "@/lib/editor/list-continue";
 import {
   agentnoteListIndentOnTab,
   agentnoteListOutdentOnShiftTab,
@@ -83,6 +84,13 @@ function editorExtensions(
     ...(readOnly
       ? []
       : [
+          // Beat markdown()'s Prec.high Enter continue so non-tight lists
+          // don't insert an extra blank line before the next marker.
+          Prec.highest(
+            keymap.of([
+              { key: "Enter", run: agentnoteInsertNewlineContinueMarkup },
+            ]),
+          ),
           keymap.of([
             {
               key: "Tab",
