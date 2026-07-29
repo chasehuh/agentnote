@@ -8,6 +8,7 @@ import {
   WRAP_STORAGE_KEY,
   isWrapPreference,
 } from "@/lib/preferences";
+import { canApplyRemoteBody } from "@/lib/remote-apply-guard";
 import {
   createTabId,
   openSyncChannel,
@@ -188,6 +189,18 @@ export function AgentNoteApp({
   saveStateRef.current = saveState;
   notesRef.current = notes;
 
+  // Update refs in the same turn as setState so poll/BroadcastChannel
+  // callbacks never observe a 1-frame-stale dirty/body (issue #47 T4).
+  const setBodyNow = useCallback((next: string) => {
+    bodyRefState.current = next;
+    setBody(next);
+  }, []);
+
+  const setSaveStateNow = useCallback((next: SaveState) => {
+    saveStateRef.current = next;
+    setSaveState(next);
+  }, []);
+
   const applyRemoteNote = useCallback((note: Note, opts?: { forceBody?: boolean }) => {
     setNotes((prev) => {
       const existing = prev.find((item) => item.id === note.id);
@@ -204,18 +217,13 @@ export function AgentNoteApp({
     });
 
     if (activeIdRef.current !== note.id) return;
-    if (
-      !opts?.forceBody &&
-      (saveStateRef.current === "dirty" || saveStateRef.current === "saving")
-    ) {
-      return;
-    }
+    if (!canApplyRemoteBody(saveStateRef.current, opts)) return;
     const nextBody = substituteAsciiArrows(note.body).text;
     if (bodyRefState.current === nextBody) return;
     skipNextSave.current = true;
-    setBody(nextBody);
-    setSaveState("saved");
-  }, []);
+    setBodyNow(nextBody);
+    setSaveStateNow("saved");
+  }, [setBodyNow, setSaveStateNow]);
 
   const applyRemoteDraft = useCallback(
     (payload: Extract<SyncMessage, { type: "draft" }>) => {
@@ -235,12 +243,14 @@ export function AgentNoteApp({
         ]);
       });
       if (activeIdRef.current !== payload.id) return;
+      // Match applyRemoteNote: never clobber an in-progress local edit.
+      if (!canApplyRemoteBody(saveStateRef.current)) return;
       if (bodyRefState.current === nextBody) return;
       skipNextSave.current = true;
-      setBody(nextBody);
-      setSaveState("saved");
+      setBodyNow(nextBody);
+      setSaveStateNow("saved");
     },
-    [],
+    [setBodyNow, setSaveStateNow],
   );
 
   const broadcastDraft = useCallback((id: string, nextBody: string) => {
@@ -314,10 +324,10 @@ export function AgentNoteApp({
     }
     skipNextSave.current = true;
     setActiveId(null);
-    setBody("");
-    setSaveState("saved");
+    setBodyNow("");
+    setSaveStateNow("saved");
     replaceNoteUrl(null);
-  }, []);
+  }, [setBodyNow, setSaveStateNow]);
 
   const selectNote = useCallback((note: Note) => {
     if (saveTimer.current) {
@@ -328,14 +338,14 @@ export function AgentNoteApp({
     // Persist migration when opening notes that still store ASCII `->`.
     skipNextSave.current = nextBody === note.body;
     setActiveId(note.id);
-    setBody(nextBody);
-    setSaveState(nextBody === note.body ? "saved" : "dirty");
+    setBodyNow(nextBody);
+    setSaveStateNow(nextBody === note.body ? "saved" : "dirty");
     replaceNoteUrl(note.id);
     if (isNarrowViewport()) setSidebarOpen(false);
-  }, []);
+  }, [setBodyNow, setSaveStateNow]);
 
   const persist = useCallback(async (id: string, nextBody: string) => {
-    setSaveState("saving");
+    setSaveStateNow("saving");
     try {
       const response = await fetch(`/api/notes/${id}`, {
         method: "PUT",
@@ -353,16 +363,16 @@ export function AgentNoteApp({
           ...prev.filter((note) => note.id !== data.note.id),
         ]),
       );
-      setSaveState("saved");
+      setSaveStateNow("saved");
       syncPost.current({
         type: "upsert",
         sourceId: tabId.current,
         note: data.note,
       });
     } catch {
-      setSaveState("error");
+      setSaveStateNow("error");
     }
-  }, []);
+  }, [setSaveStateNow]);
 
   useEffect(() => {
     if (!activeId) return;
@@ -372,7 +382,7 @@ export function AgentNoteApp({
     }
     if (activeNote && activeNote.body === body) return;
 
-    setSaveState("dirty");
+    setSaveStateNow("dirty");
     broadcastDraft(activeId, body);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
@@ -382,7 +392,7 @@ export function AgentNoteApp({
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [activeId, body, activeNote, persist, broadcastDraft]);
+  }, [activeId, body, activeNote, persist, broadcastDraft, setSaveStateNow]);
 
   const pullFromServer = useCallback(async () => {
     try {
@@ -425,8 +435,8 @@ export function AgentNoteApp({
             const nextBody = substituteAsciiArrows(fallback.body).text;
             skipNextSave.current = nextBody === fallback.body;
             setActiveId(fallback.id);
-            setBody(nextBody);
-            setSaveState(nextBody === fallback.body ? "saved" : "dirty");
+            setBodyNow(nextBody);
+            setSaveStateNow(nextBody === fallback.body ? "saved" : "dirty");
             replaceNoteUrl(fallback.id);
           } else {
             clearActiveNote();
@@ -441,7 +451,7 @@ export function AgentNoteApp({
     } catch {
       // Keep local state if the network blips.
     }
-  }, [applyRemoteNote, clearActiveNote]);
+  }, [applyRemoteNote, clearActiveNote, setBodyNow, setSaveStateNow]);
 
   useEffect(() => {
     const channel = openSyncChannel((message) => {
@@ -464,14 +474,14 @@ export function AgentNoteApp({
             skipNextSave.current = true;
             if (fallback) {
               setActiveId(fallback.id);
-              setBody(substituteAsciiArrows(fallback.body).text);
+              setBodyNow(substituteAsciiArrows(fallback.body).text);
               replaceNoteUrl(fallback.id);
             } else {
               setActiveId(null);
-              setBody("");
+              setBodyNow("");
               replaceNoteUrl(null);
             }
-            setSaveState("saved");
+            setSaveStateNow("saved");
           }
           return next;
         });
@@ -500,14 +510,14 @@ export function AgentNoteApp({
             skipNextSave.current = true;
             if (fallback) {
               setActiveId(fallback.id);
-              setBody(substituteAsciiArrows(fallback.body).text);
+              setBodyNow(substituteAsciiArrows(fallback.body).text);
               replaceNoteUrl(fallback.id);
             } else {
               setActiveId(null);
-              setBody("");
+              setBodyNow("");
               replaceNoteUrl(null);
             }
-            setSaveState("saved");
+            setSaveStateNow("saved");
           }
           return next;
         });
@@ -539,7 +549,14 @@ export function AgentNoteApp({
       window.removeEventListener("focus", onVisible);
       if (draftTimer.current) clearTimeout(draftTimer.current);
     };
-  }, [applyRemoteDraft, applyRemoteNote, pullFromServer, userId]);
+  }, [
+    applyRemoteDraft,
+    applyRemoteNote,
+    pullFromServer,
+    userId,
+    setBodyNow,
+    setSaveStateNow,
+  ]);
 
   const createNote = useCallback(async () => {
     const response = await fetch("/api/notes", { method: "POST" });
@@ -858,7 +875,7 @@ export function AgentNoteApp({
                   key={activeId}
                   value={body}
                   wrap={wrap}
-                  onChange={setBody}
+                  onChange={setBodyNow}
                   autoFocus
                 />
               </div>

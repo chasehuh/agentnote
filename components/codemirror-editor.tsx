@@ -19,6 +19,7 @@ import {
 } from "@codemirror/commands";
 import { indentUnit } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
+import { applyExternalValue } from "@/lib/editor/apply-external";
 import { arrowInputHandler, arrowPasteFilter } from "@/lib/editor/arrow-input";
 import { imageWidgets } from "@/lib/editor/image-widgets";
 import { agentnoteLineKillKeymap } from "@/lib/editor/line-kill";
@@ -252,13 +253,15 @@ export function CodeMirrorEditor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const current = view.state.doc.toString();
-    if (current === value) return;
+    if (view.state.doc.toString() === value) return;
     applyingExternal.current = true;
-    view.dispatch({
-      changes: { from: 0, to: current.length, insert: value },
-    });
-    applyingExternal.current = false;
+    try {
+      const applied = applyExternalValue(view, value);
+      // Conflict / composing: CM (local) wins — pull React state back.
+      if (!applied) onChangeRef.current?.(view.state.doc.toString());
+    } finally {
+      applyingExternal.current = false;
+    }
   }, [value]);
 
   return <div className="zed-cm-host" ref={hostRef} />;
