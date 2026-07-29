@@ -639,6 +639,8 @@ button.zed-titlebar__publish[data-active="true"]:hover:not(:disabled) {
   display: block;
   width: 100%;
   height: auto;
+  /* Intrinsic size / aspect-ratio set in image-widgets.ts so layout
+     reserves height before decode (avoids 24px collapse → scroll jump). */
   border: 1px solid var(--c-border-variant);
   user-select: none;
   cursor: pointer;
