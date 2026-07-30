@@ -5,6 +5,7 @@ import {
   hasUnsavedWork,
   isCurrentSaveAttempt,
   nextRetryDelayMs,
+  shouldAutoRetrySave,
 } from "./save-failure";
 
 describe("nextRetryDelayMs", () => {
@@ -20,12 +21,21 @@ describe("nextRetryDelayMs", () => {
 });
 
 describe("classifySaveHttpStatus", () => {
-  it("distinguishes ok, auth, and generic failures", () => {
+  it("distinguishes ok, auth, conflict, and generic failures", () => {
     expect(classifySaveHttpStatus(200)).toBe("ok");
     expect(classifySaveHttpStatus(204)).toBe("ok");
     expect(classifySaveHttpStatus(401)).toBe("auth");
+    expect(classifySaveHttpStatus(409)).toBe("conflict");
     expect(classifySaveHttpStatus(500)).toBe("generic");
     expect(classifySaveHttpStatus(404)).toBe("generic");
+  });
+});
+
+describe("shouldAutoRetrySave", () => {
+  it("auto-retries generic failures only — never conflict", () => {
+    expect(shouldAutoRetrySave("generic")).toBe(true);
+    expect(shouldAutoRetrySave("conflict")).toBe(false);
+    expect(shouldAutoRetrySave("auth")).toBe(false);
   });
 });
 

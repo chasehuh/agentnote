@@ -10,13 +10,18 @@ import {
 } from "@/lib/preferences";
 import {
   canApplyRemoteBody,
+  isDraftBaseCurrent,
   isRemoteNoteNewer,
+  noteAfterConflictKeepLocalBuffer,
+  shouldAcceptDraftSeq,
+  shouldMarkSavedAfterPersist,
 } from "@/lib/remote-apply-guard";
 import {
   classifySaveHttpStatus,
   hasUnsavedWork,
   isCurrentSaveAttempt,
   nextRetryDelayMs,
+  shouldAutoRetrySave,
   type SaveFailureKind,
 } from "@/lib/save-failure";
 import {
@@ -202,10 +207,13 @@ export function AgentNoteApp({
   const tabId = useRef(createTabId());
   const syncPost = useRef<(message: SyncMessage) => void>(() => {});
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftSeqRef = useRef(0);
+  const lastDraftSeqByPeer = useRef(new Map<string, number>());
   const activeIdRef = useRef(activeId);
   const bodyRefState = useRef(body);
   const saveStateRef = useRef(saveState);
   const notesRef = useRef(notes);
+  const lastAckedBodyRef = useRef(body);
 
   activeIdRef.current = activeId;
   bodyRefState.current = body;
@@ -247,11 +255,23 @@ export function AgentNoteApp({
     );
 
     if (activeIdRef.current !== note.id) return;
-    if (!canApplyRemoteBody(saveStateRef.current, opts)) return;
+    if (
+      !canApplyRemoteBody(saveStateRef.current, {
+        ...opts,
+        localBody: bodyRefState.current,
+        lastAckedBody: lastAckedBodyRef.current,
+      })
+    ) {
+      return;
+    }
     const nextBody = substituteAsciiArrows(note.body).text;
-    if (bodyRefState.current === nextBody) return;
+    if (bodyRefState.current === nextBody) {
+      lastAckedBodyRef.current = nextBody;
+      return;
+    }
     skipNextSave.current = true;
     setBodyNow(nextBody);
+    lastAckedBodyRef.current = nextBody;
     setSaveErrorKind(null);
     setSaveStateNow("saved");
   }, [setBodyNow, setSaveStateNow]);
@@ -270,15 +290,32 @@ export function AgentNoteApp({
   const applyRemoteDraft = useCallback(
     (payload: Extract<SyncMessage, { type: "draft" }>) => {
       if (payload.sourceId === tabId.current) return;
+
+      const peerKey = `${payload.sourceId}:${payload.id}`;
+      const prevSeq = lastDraftSeqByPeer.current.get(peerKey);
+      if (!shouldAcceptDraftSeq(prevSeq, payload.draftSeq)) return;
+      if (payload.draftSeq != null && Number.isFinite(payload.draftSeq)) {
+        lastDraftSeqByPeer.current.set(peerKey, payload.draftSeq);
+      }
+
+      const existing = notesRef.current.find((item) => item.id === payload.id);
+      if (!existing) return;
+
+      // Stale generation (or missing base from old bundles): never shrink a
+      // clean editor from a peer draft (issue #57).
+      if (!isDraftBaseCurrent(existing.updated_at, payload.baseUpdatedAt)) {
+        return;
+      }
+
       const nextBody = substituteAsciiArrows(payload.body).text;
       setNotes((prev) => {
-        const existing = prev.find((item) => item.id === payload.id);
-        if (!existing) return prev;
+        const current = prev.find((item) => item.id === payload.id);
+        if (!current) return prev;
         // Do not inject client-clock `at` into updated_at — that lets a
         // skewed peer look newer than a real server save (issue #51).
         return sortNotesByRecent([
           {
-            ...existing,
+            ...current,
             title: payload.title,
             body: nextBody,
           },
@@ -287,10 +324,18 @@ export function AgentNoteApp({
       });
       if (activeIdRef.current !== payload.id) return;
       // Match applyRemoteNote: never clobber an in-progress local edit.
-      if (!canApplyRemoteBody(saveStateRef.current)) return;
+      if (
+        !canApplyRemoteBody(saveStateRef.current, {
+          localBody: bodyRefState.current,
+          lastAckedBody: lastAckedBodyRef.current,
+        })
+      ) {
+        return;
+      }
       if (bodyRefState.current === nextBody) return;
       skipNextSave.current = true;
       setBodyNow(nextBody);
+      lastAckedBodyRef.current = nextBody;
       setSaveErrorKind(null);
       setSaveStateNow("saved");
     },
@@ -300,6 +345,8 @@ export function AgentNoteApp({
   const broadcastDraft = useCallback((id: string, nextBody: string) => {
     if (draftTimer.current) clearTimeout(draftTimer.current);
     draftTimer.current = setTimeout(() => {
+      const existing = notesRef.current.find((item) => item.id === id);
+      draftSeqRef.current += 1;
       syncPost.current({
         type: "draft",
         sourceId: tabId.current,
@@ -307,6 +354,8 @@ export function AgentNoteApp({
         body: nextBody,
         title: deriveTitle(nextBody),
         at: Date.now(),
+        baseUpdatedAt: existing?.updated_at,
+        draftSeq: draftSeqRef.current,
       });
     }, DRAFT_BROADCAST_MS);
   }, []);
@@ -361,7 +410,28 @@ export function AgentNoteApp({
     [notes, activeId],
   );
 
-  const clearActiveNote = useCallback(() => {
+  const applyActiveNoteSelection = useCallback(
+    (note: Note) => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      clearSaveRetry();
+      const nextBody = substituteAsciiArrows(note.body).text;
+      // Persist migration when opening notes that still store ASCII `->`.
+      skipNextSave.current = nextBody === note.body;
+      setActiveId(note.id);
+      setBodyNow(nextBody);
+      lastAckedBodyRef.current = nextBody;
+      setSaveErrorKind(null);
+      setSaveStateNow(nextBody === note.body ? "saved" : "dirty");
+      replaceNoteUrl(note.id);
+      if (isNarrowViewport()) setSidebarOpen(false);
+    },
+    [clearSaveRetry, setBodyNow, setSaveStateNow],
+  );
+
+  const applyClearActiveNote = useCallback(() => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
@@ -370,26 +440,10 @@ export function AgentNoteApp({
     skipNextSave.current = true;
     setActiveId(null);
     setBodyNow("");
+    lastAckedBodyRef.current = "";
     setSaveErrorKind(null);
     setSaveStateNow("saved");
     replaceNoteUrl(null);
-  }, [clearSaveRetry, setBodyNow, setSaveStateNow]);
-
-  const selectNote = useCallback((note: Note) => {
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
-    clearSaveRetry();
-    const nextBody = substituteAsciiArrows(note.body).text;
-    // Persist migration when opening notes that still store ASCII `->`.
-    skipNextSave.current = nextBody === note.body;
-    setActiveId(note.id);
-    setBodyNow(nextBody);
-    setSaveErrorKind(null);
-    setSaveStateNow(nextBody === note.body ? "saved" : "dirty");
-    replaceNoteUrl(note.id);
-    if (isNarrowViewport()) setSidebarOpen(false);
   }, [clearSaveRetry, setBodyNow, setSaveStateNow]);
 
   const persist = useCallback(
@@ -420,6 +474,15 @@ export function AgentNoteApp({
         }, delay);
       };
 
+      const expectedUpdatedAt = notesRef.current.find(
+        (note) => note.id === id,
+      )?.updated_at;
+      if (!expectedUpdatedAt) {
+        setSaveErrorKind("generic");
+        setSaveStateNow("error");
+        return false;
+      }
+
       try {
         const response = await fetch(`/api/notes/${id}`, {
           method: "PUT",
@@ -427,6 +490,7 @@ export function AgentNoteApp({
           body: JSON.stringify({
             title: deriveTitle(nextBody),
             body: nextBody,
+            expected_updated_at: expectedUpdatedAt,
           }),
         });
 
@@ -435,10 +499,42 @@ export function AgentNoteApp({
         }
 
         const kind = classifySaveHttpStatus(response.status);
+        if (kind === "conflict") {
+          clearSaveRetry();
+          let conflictNote: Note | null = null;
+          try {
+            const data = (await response.json()) as { note?: Note };
+            conflictNote = data.note ?? null;
+          } catch {
+            conflictNote = null;
+          }
+          if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
+            return false;
+          }
+          if (conflictNote) {
+            // Rebase concurrency token; keep local buffer so autosave does not
+            // treat server body as the editor and auto-PUT the stale short text.
+            const kept = noteAfterConflictKeepLocalBuffer(
+              conflictNote,
+              bodyRefState.current,
+              deriveTitle(bodyRefState.current),
+            ) as Note;
+            setNotes((prev) =>
+              sortNotesByRecent([
+                kept,
+                ...prev.filter((note) => note.id !== kept.id),
+              ]),
+            );
+          }
+          setSaveErrorKind("conflict");
+          setSaveStateNow("error");
+          return false;
+        }
+
         if (kind !== "ok") {
           setSaveErrorKind(kind);
           setSaveStateNow("error");
-          if (kind === "auth") {
+          if (kind === "auth" || !shouldAutoRetrySave(kind)) {
             clearSaveRetry();
             return false;
           }
@@ -459,7 +555,22 @@ export function AgentNoteApp({
             ...prev.filter((note) => note.id !== data.note.id),
           ]),
         );
-        setSaveStateNow("saved");
+
+        const ackedBody = substituteAsciiArrows(data.note.body).text;
+        if (shouldMarkSavedAfterPersist(nextBody, bodyRefState.current)) {
+          lastAckedBodyRef.current = ackedBody;
+          setSaveStateNow("saved");
+        } else {
+          // Buffer advanced during the in-flight PUT — stay dirty and ensure
+          // a follow-up persist is armed (issue #57 / H4).
+          setSaveStateNow("dirty");
+          if (!saveTimer.current) {
+            saveTimer.current = setTimeout(() => {
+              void persistRef.current(id, bodyRefState.current);
+            }, 400);
+          }
+        }
+
         syncPost.current({
           type: "upsert",
           sourceId: tabId.current,
@@ -501,6 +612,50 @@ export function AgentNoteApp({
     clearSaveRetry();
     return persist(id, bodyRefState.current);
   }, [clearSaveRetry, persist]);
+
+  /**
+   * Leaving the active note must not discard a dirty/saving/error buffer.
+   * Mirror Reload-to-Update: flush first; confirm only if flush fails.
+   */
+  const ensureSafeToLeaveActive = useCallback(async () => {
+    if (!hasUnsavedWork(saveStateRef.current)) return true;
+    let flushed = false;
+    try {
+      flushed = await flushPendingSave();
+    } catch {
+      flushed = false;
+    }
+    if (flushed) return true;
+    return window.confirm(
+      "You have unsaved changes. Discard them and continue?",
+    );
+  }, [flushPendingSave]);
+
+  const clearActiveNote = useCallback(
+    async (opts?: { skipFlush?: boolean }) => {
+      if (!opts?.skipFlush) {
+        const ok = await ensureSafeToLeaveActive();
+        if (!ok) return false;
+      }
+      applyClearActiveNote();
+      return true;
+    },
+    [applyClearActiveNote, ensureSafeToLeaveActive],
+  );
+
+  const selectNote = useCallback(
+    async (note: Note, opts?: { skipFlush?: boolean }) => {
+      // Re-clicking the active note must not reset a dirty buffer from list state.
+      if (activeIdRef.current === note.id) return true;
+      if (!opts?.skipFlush) {
+        const ok = await ensureSafeToLeaveActive();
+        if (!ok) return false;
+      }
+      applyActiveNoteSelection(note);
+      return true;
+    },
+    [applyActiveNoteSelection, ensureSafeToLeaveActive],
+  );
 
   useEffect(() => {
     if (!activeId) return;
@@ -575,14 +730,10 @@ export function AgentNoteApp({
             remoteNotes,
           )[0] ?? null;
           if (fallback) {
-            const nextBody = substituteAsciiArrows(fallback.body).text;
-            skipNextSave.current = nextBody === fallback.body;
-            setActiveId(fallback.id);
-            setBodyNow(nextBody);
-            setSaveStateNow(nextBody === fallback.body ? "saved" : "dirty");
-            replaceNoteUrl(fallback.id);
+            // Active note vanished remotely — switch without flushing a ghost id.
+            applyActiveNoteSelection(fallback);
           } else {
-            clearActiveNote();
+            void clearActiveNote({ skipFlush: true });
           }
         }
       }
@@ -594,7 +745,11 @@ export function AgentNoteApp({
     } catch {
       // Keep local state if the network blips.
     }
-  }, [applyRemoteNote, clearActiveNote, setBodyNow, setSaveStateNow]);
+  }, [
+    applyActiveNoteSelection,
+    applyRemoteNote,
+    clearActiveNote,
+  ]);
 
   useEffect(() => {
     const channel = openSyncChannel((message) => {
@@ -704,6 +859,8 @@ export function AgentNoteApp({
   ]);
 
   const createNote = useCallback(async () => {
+    const ok = await ensureSafeToLeaveActive();
+    if (!ok) return;
     const response = await fetch("/api/notes", { method: "POST" });
     if (!response.ok) return;
     const data = (await response.json()) as { note: Note };
@@ -713,9 +870,9 @@ export function AgentNoteApp({
       sourceId: tabId.current,
       note: data.note,
     });
-    selectNote(data.note);
+    await selectNote(data.note, { skipFlush: true });
     if (!isNarrowViewport()) setSidebarOpen(true);
-  }, [selectNote]);
+  }, [ensureSafeToLeaveActive, selectNote]);
 
   function requestArchive(note: Note) {
     setPendingArchive(note);
@@ -746,18 +903,19 @@ export function AgentNoteApp({
         sourceId: tabId.current,
         note: archived,
       });
-      setNotes((prev) => {
-        const next = sortNotesByRecent(prev.filter((note) => note.id !== id));
-        if (activeIdRef.current === id) {
-          const fallback = next[0] ?? null;
-          if (fallback) {
-            selectNote(fallback);
-          } else {
-            clearActiveNote();
-          }
+      const wasActive = activeIdRef.current === id;
+      const remaining = sortNotesByRecent(
+        notesRef.current.filter((note) => note.id !== id),
+      );
+      setNotes(remaining);
+      if (wasActive) {
+        const fallback = remaining[0] ?? null;
+        if (fallback) {
+          await selectNote(fallback, { skipFlush: true });
+        } else {
+          await clearActiveNote({ skipFlush: true });
         }
-        return next;
-      });
+      }
       setArchivedNotes((prev) =>
         sortArchivedByDeleted([
           archived,
@@ -789,7 +947,7 @@ export function AgentNoteApp({
         ...prev.filter((item) => item.id !== data.note.id),
       ]),
     );
-    selectNote(data.note);
+    await selectNote(data.note);
   }
 
   function requestPermanentDelete(note: Note) {
@@ -892,11 +1050,17 @@ export function AgentNoteApp({
             title={
               saveErrorKind === "auth"
                 ? "Session expired — sign in again to save"
-                : "Latest changes are not saved"
+                : saveErrorKind === "conflict"
+                  ? "Another tab saved this note — Retry overwrites with your version"
+                  : "Latest changes are not saved"
             }
           >
             <span>
-              {saveErrorKind === "auth" ? "Sign in to save" : "Not saved"}
+              {saveErrorKind === "auth"
+                ? "Sign in to save"
+                : saveErrorKind === "conflict"
+                  ? "Conflict"
+                  : "Not saved"}
             </span>
             {saveErrorKind === "auth" ? (
               <a className="zed-save-error__action" href="/login">
@@ -967,7 +1131,7 @@ export function AgentNoteApp({
                     <button
                       type="button"
                       className="zed-note-item__hit"
-                      onClick={() => selectNote(note)}
+                      onClick={() => void selectNote(note)}
                     >
                       <span
                         className="zed-note-item__title"
