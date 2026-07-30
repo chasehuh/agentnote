@@ -8,7 +8,10 @@ import {
   WRAP_STORAGE_KEY,
   isWrapPreference,
 } from "@/lib/preferences";
-import { canApplyRemoteBody } from "@/lib/remote-apply-guard";
+import {
+  canApplyRemoteBody,
+  isRemoteNoteNewer,
+} from "@/lib/remote-apply-guard";
 import {
   createTabId,
   openSyncChannel,
@@ -202,19 +205,18 @@ export function AgentNoteApp({
   }, []);
 
   const applyRemoteNote = useCallback((note: Note, opts?: { forceBody?: boolean }) => {
-    setNotes((prev) => {
-      const existing = prev.find((item) => item.id === note.id);
-      if (
-        existing &&
-        new Date(existing.updated_at).getTime() > new Date(note.updated_at).getTime()
-      ) {
-        return prev;
-      }
-      return sortNotesByRecent([
+    const existing = notesRef.current.find((item) => item.id === note.id);
+    // Equal-or-older remote must not replace local list/body (issue #51).
+    if (existing && !isRemoteNoteNewer(existing.updated_at, note.updated_at)) {
+      return;
+    }
+
+    setNotes((prev) =>
+      sortNotesByRecent([
         note,
         ...prev.filter((item) => item.id !== note.id),
-      ]);
-    });
+      ]),
+    );
 
     if (activeIdRef.current !== note.id) return;
     if (!canApplyRemoteBody(saveStateRef.current, opts)) return;
@@ -225,6 +227,17 @@ export function AgentNoteApp({
     setSaveStateNow("saved");
   }, [setBodyNow, setSaveStateNow]);
 
+  const reconcileBodyFromEditor = useCallback(
+    (next: string) => {
+      // Skipped external apply: keep CM as source of truth in React without
+      // marking dirty or arming the autosave timer (issue #51).
+      if (bodyRefState.current === next) return;
+      skipNextSave.current = true;
+      setBodyNow(next);
+    },
+    [setBodyNow],
+  );
+
   const applyRemoteDraft = useCallback(
     (payload: Extract<SyncMessage, { type: "draft" }>) => {
       if (payload.sourceId === tabId.current) return;
@@ -232,12 +245,13 @@ export function AgentNoteApp({
       setNotes((prev) => {
         const existing = prev.find((item) => item.id === payload.id);
         if (!existing) return prev;
+        // Do not inject client-clock `at` into updated_at — that lets a
+        // skewed peer look newer than a real server save (issue #51).
         return sortNotesByRecent([
           {
             ...existing,
             title: payload.title,
             body: nextBody,
-            updated_at: new Date(payload.at).toISOString(),
           },
           ...prev.filter((item) => item.id !== payload.id),
         ]);
@@ -409,11 +423,7 @@ export function AgentNoteApp({
 
       for (const remote of remoteNotes) {
         const local = localById.get(remote.id);
-        if (
-          !local ||
-          new Date(remote.updated_at).getTime() >
-            new Date(local.updated_at).getTime()
-        ) {
+        if (!local || isRemoteNoteNewer(local.updated_at, remote.updated_at)) {
           applyRemoteNote(remote);
         }
       }
@@ -461,7 +471,9 @@ export function AgentNoteApp({
         return;
       }
       if (message.type === "upsert") {
-        applyRemoteNote(message.note, { forceBody: true });
+        // Never forceBody on upsert — a stale peer save must not clobber an
+        // actively edited buffer (issue #51 / #48 dirty-guard hole).
+        applyRemoteNote(message.note);
         return;
       }
       if (message.type === "archive") {
@@ -876,6 +888,7 @@ export function AgentNoteApp({
                   value={body}
                   wrap={wrap}
                   onChange={setBodyNow}
+                  onExternalReconcile={reconcileBodyFromEditor}
                   autoFocus
                 />
               </div>
