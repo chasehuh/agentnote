@@ -5,9 +5,20 @@ import { useEffect, useState } from "react";
 const CLIENT_BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID || "dev";
 const POLL_MS = 60_000;
 
-export function ReloadToUpdate() {
+type ReloadToUpdateProps = {
+  /** When true, flush pending work and/or warn before reloading. */
+  hasUnsavedWork?: boolean;
+  /** Best-effort flush of the current buffer before reload. */
+  onFlushSave?: () => Promise<boolean>;
+};
+
+export function ReloadToUpdate({
+  hasUnsavedWork = false,
+  onFlushSave,
+}: ReloadToUpdateProps) {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,13 +55,40 @@ export function ReloadToUpdate() {
 
   if (!updateAvailable || dismissed) return null;
 
+  async function handleReload() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (hasUnsavedWork) {
+        let flushed = false;
+        if (onFlushSave) {
+          try {
+            flushed = await onFlushSave();
+          } catch {
+            flushed = false;
+          }
+        }
+        if (!flushed) {
+          const proceed = window.confirm(
+            "You have unsaved changes. Reload anyway and discard them?",
+          );
+          if (!proceed) return;
+        }
+      }
+      window.location.reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="zed-update">
       <button
         type="button"
         className="zed-update__btn"
         title="A newer version of agentnote is available"
-        onClick={() => window.location.reload()}
+        disabled={busy}
+        onClick={() => void handleReload()}
       >
         <DownloadIcon />
         Reload to Update

@@ -13,6 +13,13 @@ import {
   isRemoteNoteNewer,
 } from "@/lib/remote-apply-guard";
 import {
+  classifySaveHttpStatus,
+  hasUnsavedWork,
+  isCurrentSaveAttempt,
+  nextRetryDelayMs,
+  type SaveFailureKind,
+} from "@/lib/save-failure";
+import {
   createTabId,
   openSyncChannel,
   type SyncMessage,
@@ -170,6 +177,9 @@ export function AgentNoteApp({
     return substituteAsciiArrows(initial?.body ?? "").text;
   });
   const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [saveErrorKind, setSaveErrorKind] = useState<SaveFailureKind | null>(
+    null,
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -178,6 +188,16 @@ export function AgentNoteApp({
     useState<Appearance>(DEFAULT_APPEARANCE);
   const [wrap, setWrap] = useState(DEFAULT_WRAP);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryAttemptRef = useRef(0);
+  const saveSeqRef = useRef(0);
+  const persistRef = useRef<
+    (
+      id: string,
+      nextBody: string,
+      opts?: { isRetry?: boolean },
+    ) => Promise<boolean>
+  >(async () => false);
   const skipNextSave = useRef(false);
   const tabId = useRef(createTabId());
   const syncPost = useRef<(message: SyncMessage) => void>(() => {});
@@ -191,6 +211,14 @@ export function AgentNoteApp({
   bodyRefState.current = body;
   saveStateRef.current = saveState;
   notesRef.current = notes;
+
+  const clearSaveRetry = useCallback(() => {
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    }
+    retryAttemptRef.current = 0;
+  }, []);
 
   // Update refs in the same turn as setState so poll/BroadcastChannel
   // callbacks never observe a 1-frame-stale dirty/body (issue #47 T4).
@@ -224,6 +252,7 @@ export function AgentNoteApp({
     if (bodyRefState.current === nextBody) return;
     skipNextSave.current = true;
     setBodyNow(nextBody);
+    setSaveErrorKind(null);
     setSaveStateNow("saved");
   }, [setBodyNow, setSaveStateNow]);
 
@@ -262,6 +291,7 @@ export function AgentNoteApp({
       if (bodyRefState.current === nextBody) return;
       skipNextSave.current = true;
       setBodyNow(nextBody);
+      setSaveErrorKind(null);
       setSaveStateNow("saved");
     },
     [setBodyNow, setSaveStateNow],
@@ -336,57 +366,141 @@ export function AgentNoteApp({
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
+    clearSaveRetry();
     skipNextSave.current = true;
     setActiveId(null);
     setBodyNow("");
+    setSaveErrorKind(null);
     setSaveStateNow("saved");
     replaceNoteUrl(null);
-  }, [setBodyNow, setSaveStateNow]);
+  }, [clearSaveRetry, setBodyNow, setSaveStateNow]);
 
   const selectNote = useCallback((note: Note) => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
+    clearSaveRetry();
     const nextBody = substituteAsciiArrows(note.body).text;
     // Persist migration when opening notes that still store ASCII `->`.
     skipNextSave.current = nextBody === note.body;
     setActiveId(note.id);
     setBodyNow(nextBody);
+    setSaveErrorKind(null);
     setSaveStateNow(nextBody === note.body ? "saved" : "dirty");
     replaceNoteUrl(note.id);
     if (isNarrowViewport()) setSidebarOpen(false);
-  }, [setBodyNow, setSaveStateNow]);
+  }, [clearSaveRetry, setBodyNow, setSaveStateNow]);
 
-  const persist = useCallback(async (id: string, nextBody: string) => {
-    setSaveStateNow("saving");
-    try {
-      const response = await fetch(`/api/notes/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: deriveTitle(nextBody),
-          body: nextBody,
-        }),
-      });
-      if (!response.ok) throw new Error("save failed");
-      const data = (await response.json()) as { note: Note };
-      setNotes((prev) =>
-        sortNotesByRecent([
-          data.note,
-          ...prev.filter((note) => note.id !== data.note.id),
-        ]),
-      );
-      setSaveStateNow("saved");
-      syncPost.current({
-        type: "upsert",
-        sourceId: tabId.current,
-        note: data.note,
-      });
-    } catch {
-      setSaveStateNow("error");
+  const persist = useCallback(
+    async (
+      id: string,
+      nextBody: string,
+      opts?: { isRetry?: boolean },
+    ): Promise<boolean> => {
+      const seq = ++saveSeqRef.current;
+      if (!opts?.isRetry) {
+        clearSaveRetry();
+      }
+      setSaveStateNow("saving");
+
+      const scheduleRetry = () => {
+        const delay = nextRetryDelayMs(retryAttemptRef.current);
+        if (delay == null) return;
+        const attempt = retryAttemptRef.current;
+        retryAttemptRef.current = attempt + 1;
+        if (retryTimer.current) clearTimeout(retryTimer.current);
+        retryTimer.current = setTimeout(() => {
+          retryTimer.current = null;
+          if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) return;
+          if (activeIdRef.current !== id) return;
+          void persistRef.current(id, bodyRefState.current, {
+            isRetry: true,
+          });
+        }, delay);
+      };
+
+      try {
+        const response = await fetch(`/api/notes/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: deriveTitle(nextBody),
+            body: nextBody,
+          }),
+        });
+
+        if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
+          return false;
+        }
+
+        const kind = classifySaveHttpStatus(response.status);
+        if (kind !== "ok") {
+          setSaveErrorKind(kind);
+          setSaveStateNow("error");
+          if (kind === "auth") {
+            clearSaveRetry();
+            return false;
+          }
+          scheduleRetry();
+          return false;
+        }
+
+        const data = (await response.json()) as { note: Note };
+        if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
+          return false;
+        }
+
+        clearSaveRetry();
+        setSaveErrorKind(null);
+        setNotes((prev) =>
+          sortNotesByRecent([
+            data.note,
+            ...prev.filter((note) => note.id !== data.note.id),
+          ]),
+        );
+        setSaveStateNow("saved");
+        syncPost.current({
+          type: "upsert",
+          sourceId: tabId.current,
+          note: data.note,
+        });
+        return true;
+      } catch {
+        if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
+          return false;
+        }
+        setSaveErrorKind("generic");
+        setSaveStateNow("error");
+        scheduleRetry();
+        return false;
+      }
+    },
+    [clearSaveRetry, setSaveStateNow],
+  );
+
+  useEffect(() => {
+    persistRef.current = persist;
+  }, [persist]);
+
+  const retrySaveNow = useCallback(() => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    clearSaveRetry();
+    void persist(id, bodyRefState.current);
+  }, [clearSaveRetry, persist]);
+
+  const flushPendingSave = useCallback(async () => {
+    const id = activeIdRef.current;
+    if (!id) return true;
+    if (!hasUnsavedWork(saveStateRef.current)) return true;
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
     }
-  }, [setSaveStateNow]);
+    clearSaveRetry();
+    return persist(id, bodyRefState.current);
+  }, [clearSaveRetry, persist]);
 
   useEffect(() => {
     if (!activeId) return;
@@ -396,6 +510,7 @@ export function AgentNoteApp({
     }
     if (activeNote && activeNote.body === body) return;
 
+    clearSaveRetry();
     setSaveStateNow("dirty");
     broadcastDraft(activeId, body);
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -406,7 +521,25 @@ export function AgentNoteApp({
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [activeId, body, activeNote, persist, broadcastDraft, setSaveStateNow]);
+  }, [
+    activeId,
+    body,
+    activeNote,
+    persist,
+    broadcastDraft,
+    clearSaveRetry,
+    setSaveStateNow,
+  ]);
+
+  useEffect(() => {
+    if (!hasUnsavedWork(saveState)) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [saveState]);
 
   const pullFromServer = useCallback(async () => {
     try {
@@ -752,7 +885,38 @@ export function AgentNoteApp({
         >
           {activeNote?.is_public ? "Published" : "Publish"}
         </button>
-        <ReloadToUpdate />
+        {saveState === "error" ? (
+          <div
+            className="zed-save-error"
+            role="alert"
+            title={
+              saveErrorKind === "auth"
+                ? "Session expired — sign in again to save"
+                : "Latest changes are not saved"
+            }
+          >
+            <span>
+              {saveErrorKind === "auth" ? "Sign in to save" : "Not saved"}
+            </span>
+            {saveErrorKind === "auth" ? (
+              <a className="zed-save-error__action" href="/login">
+                Sign in
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="zed-save-error__action"
+                onClick={retrySaveNow}
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        ) : null}
+        <ReloadToUpdate
+          hasUnsavedWork={hasUnsavedWork(saveState)}
+          onFlushSave={flushPendingSave}
+        />
         <AccountMenu onOpenSettings={() => setSettingsOpen(true)} />
       </header>
 
@@ -788,10 +952,12 @@ export function AgentNoteApp({
                     ? previewTitle({ title: deriveTitle(body), body })
                     : previewTitle(note);
                 const updatedLabel =
-                  note.id === activeId &&
-                  (saveState === "dirty" || saveState === "saving")
-                    ? "Just now"
-                    : formatUpdatedAt(note.updated_at);
+                  note.id === activeId && saveState === "error"
+                    ? "Not saved"
+                    : note.id === activeId &&
+                        (saveState === "dirty" || saveState === "saving")
+                      ? "Just now"
+                      : formatUpdatedAt(note.updated_at);
                 return (
                   <div
                     key={note.id}
