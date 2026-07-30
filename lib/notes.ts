@@ -7,6 +7,24 @@ import type { Note, PublicNote } from "./types";
 
 export type { Note, PublicNote };
 
+/** Keep prior note bodies for this many days (mirrors archive retention). */
+export const NOTE_REVISION_RETENTION_DAYS = 30;
+
+/**
+ * Skip writing another revision when one already exists within this window.
+ * Collapses 400ms autosave bursts into a single trail entry.
+ */
+export const NOTE_REVISION_COALESCE_SECONDS = 60;
+
+export type NoteRevision = {
+  id: string;
+  note_id: string;
+  user_id: string;
+  title: string;
+  body: string;
+  created_at: string;
+};
+
 type NoteRow = {
   id: string;
   title: string;
@@ -28,6 +46,20 @@ type PublicNoteRow = {
   updated_at: Date;
   author_handle: string | null;
   public_id: string | null;
+};
+
+type NoteRevisionRow = {
+  id: string | number | bigint;
+  note_id: string;
+  user_id: string;
+  title: string;
+  body: string;
+  created_at: Date;
+};
+
+type UpdatedNoteRow = NoteRow & {
+  prev_title: string;
+  prev_body: string;
 };
 
 const NOTE_COLUMNS = `id, title, body, created_at, updated_at, deleted_at,
@@ -59,6 +91,61 @@ function mapPublicNote(row: PublicNoteRow): PublicNote {
     /** Path key = private note id; may briefly still be a legacy opaque token. */
     public_id: row.public_id ?? row.id,
   };
+}
+
+function mapNoteRevision(row: NoteRevisionRow): NoteRevision {
+  return {
+    id: String(row.id),
+    note_id: row.note_id,
+    user_id: row.user_id,
+    title: row.title,
+    body: row.body,
+    created_at: row.created_at.toISOString(),
+  };
+}
+
+/** True when a body overwrite should leave a recoverable prior copy. */
+export function shouldRecordBodyRevision(
+  previousBody: string,
+  nextBody: string,
+): boolean {
+  return previousBody !== nextBody;
+}
+
+/**
+ * Best-effort insert of the body about to be replaced.
+ * Coalesces bursts; never throws to the caller.
+ */
+async function recordPreviousBodyRevision(input: {
+  noteId: string;
+  userId: string;
+  title: string;
+  body: string;
+}): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO note_revisions (note_id, user_id, title, body)
+       SELECT $1, $2, $3, $4
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM note_revisions
+         WHERE note_id = $1
+           AND created_at > NOW() - ($5 * INTERVAL '1 second')
+       )`,
+      [
+        input.noteId,
+        input.userId,
+        input.title,
+        input.body,
+        NOTE_REVISION_COALESCE_SECONDS,
+      ],
+    );
+  } catch (error) {
+    console.error("record note revision failed", {
+      noteId: input.noteId,
+      error,
+    });
+  }
 }
 
 export async function listNotes(userId: string): Promise<Note[]> {
@@ -210,17 +297,77 @@ export async function updateNote(
   const canonicalId = await resolveCanonicalNoteId(userId, id);
   if (!canonicalId) return null;
 
-  const result = await query<NoteRow>(
-    `UPDATE notes
-     SET title = $3,
-         body = $4,
-         updated_at = NOW()
-     WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-     RETURNING ${NOTE_COLUMNS}`,
+  // Capture the pre-update body in the same statement as the overwrite so a
+  // concurrent save cannot interleave between read and write.
+  const result = await query<UpdatedNoteRow>(
+    `WITH prev AS (
+       SELECT id, title, body
+       FROM notes
+       WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+     ),
+     updated AS (
+       UPDATE notes AS n
+       SET title = $3,
+           body = $4,
+           updated_at = NOW()
+       FROM prev
+       WHERE n.id = prev.id
+       RETURNING
+         n.id, n.title, n.body, n.created_at, n.updated_at, n.deleted_at,
+         n.is_public, n.public_id, n.published_at, n.author_handle,
+         prev.title AS prev_title,
+         prev.body AS prev_body
+     )
+     SELECT * FROM updated`,
     [canonicalId, userId, input.title, input.body],
   );
   const row = result.rows[0];
-  return row ? mapNote(row) : null;
+  if (!row) return null;
+
+  if (shouldRecordBodyRevision(row.prev_body, input.body)) {
+    // Revision failure must not fail the user's save.
+    await recordPreviousBodyRevision({
+      noteId: canonicalId,
+      userId,
+      title: row.prev_title,
+      body: row.prev_body,
+    });
+  }
+
+  return mapNote(row);
+}
+
+/** List body revisions for a note (newest first). Operator / recovery helper. */
+export async function listNoteRevisions(
+  userId: string,
+  id: string,
+  opts?: { limit?: number },
+): Promise<NoteRevision[]> {
+  const canonicalId = await resolveCanonicalNoteId(userId, id, {
+    includeArchived: true,
+  });
+  if (!canonicalId) return [];
+
+  const limit = Math.min(Math.max(opts?.limit ?? 50, 1), 200);
+  const result = await query<NoteRevisionRow>(
+    `SELECT id, note_id, user_id, title, body, created_at
+     FROM note_revisions
+     WHERE note_id = $1 AND user_id = $2
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [canonicalId, userId, limit],
+  );
+  return result.rows.map(mapNoteRevision);
+}
+
+/** Hard-purge revisions older than retention. Returns deleted count. */
+export async function purgeExpiredNoteRevisions(): Promise<number> {
+  const result = await query(
+    `DELETE FROM note_revisions
+     WHERE created_at < NOW() - ($1 * INTERVAL '1 day')`,
+    [NOTE_REVISION_RETENTION_DAYS],
+  );
+  return result.rowCount ?? 0;
 }
 
 /**

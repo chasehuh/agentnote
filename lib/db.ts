@@ -189,6 +189,27 @@ export async function ensureSchema() {
         WHERE deleted_at IS NOT NULL;
       `);
 
+      // Body revision trail — previous body before overwrite (see README recovery).
+      // ON DELETE CASCADE: permanent delete / archive purge also drops revisions.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS note_revisions (
+          id BIGSERIAL PRIMARY KEY,
+          note_id TEXT NOT NULL REFERENCES notes(id) ON UPDATE CASCADE ON DELETE CASCADE,
+          user_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS note_revisions_note_created_idx
+        ON note_revisions (note_id, created_at DESC);
+      `);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS note_revisions_created_at_idx
+        ON note_revisions (created_at);
+      `);
+
       await migrateLegacyNoteIds(pool);
     })();
   }
