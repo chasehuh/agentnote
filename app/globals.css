@@ -260,11 +260,54 @@ button.zed-titlebar__publish[data-active="true"]:hover:not(:disabled) {
   font-weight: 500;
 }
 
+.zed-save-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  margin-right: 4px;
+  border: 1px solid color-mix(in srgb, var(--c-error) 55%, var(--c-border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--c-error) 12%, transparent);
+  color: var(--c-error);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.zed-save-error__action {
+  all: unset;
+  box-sizing: border-box;
+  color: var(--c-error);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.zed-save-error__action:hover {
+  color: var(--c-text);
+}
+
+a.zed-save-error__action {
+  color: var(--c-error);
+}
+
 .zed-update {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   margin-right: 4px;
+}
+
+.zed-update__btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .zed-update__btn {
