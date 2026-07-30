@@ -41,6 +41,12 @@ type CodeMirrorEditorProps = {
   value: string;
   wrap: boolean;
   onChange?: (value: string) => void;
+  /**
+   * Called when an external `value` cannot be applied (selection conflict /
+   * IME composing). Must sync React state from the local CM doc without
+   * marking the note dirty or scheduling a save.
+   */
+  onExternalReconcile?: (value: string) => void;
   autoFocus?: boolean;
   placeholderText?: string;
   /** Published / share view — no edits, no active-line chrome. */
@@ -199,6 +205,7 @@ export function CodeMirrorEditor({
   value,
   wrap,
   onChange,
+  onExternalReconcile,
   autoFocus = false,
   placeholderText = "Start typing…",
   readOnly = false,
@@ -206,10 +213,12 @@ export function CodeMirrorEditor({
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
+  const onExternalReconcileRef = useRef(onExternalReconcile);
   const wrapCompartment = useRef(new Compartment());
   const applyingExternal = useRef(false);
 
   onChangeRef.current = onChange;
+  onExternalReconcileRef.current = onExternalReconcile;
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -257,8 +266,16 @@ export function CodeMirrorEditor({
     applyingExternal.current = true;
     try {
       const applied = applyExternalValue(view, value);
-      // Conflict / composing: CM (local) wins — pull React state back.
-      if (!applied) onChangeRef.current?.(view.state.doc.toString());
+      // Conflict / composing: CM (local) wins — reconcile React without
+      // going through onChange (which marks dirty and schedules a PUT).
+      if (!applied) {
+        const local = view.state.doc.toString();
+        if (onExternalReconcileRef.current) {
+          onExternalReconcileRef.current(local);
+        } else {
+          onChangeRef.current?.(local);
+        }
+      }
     } finally {
       applyingExternal.current = false;
     }
