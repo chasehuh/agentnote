@@ -86,9 +86,38 @@ Set on Vercel Production:
 CRON_SECRET=<long-random-string>
 ```
 
+### Note body revisions (ops recovery)
+
+Every body-changing save stores the **previous** body in `note_revisions` before overwrite. Title-only or identical-body saves write nothing. Autosave bursts coalesce: at most one new revision per note per **60 seconds**. Rows older than **30 days** are hard-purged by nightly cron `GET /api/cron/purge-note-revisions` (Bearer `CRON_SECRET`). Permanent note delete (and the 30-day archive purge) cascade-deletes that note’s revisions.
+
+This is an operator safety net, not a user-facing history UI. It is also **not** a substitute for database backups — enable Railway volume backups (below) for disasters; confirm whether the Postgres provider has point-in-time recovery (PITR) enabled separately.
+
+List recent revisions for a note:
+
+```sql
+SELECT id, length(body) AS body_len, created_at
+FROM note_revisions
+WHERE note_id = $1
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+Restore a specific revision’s body onto the live note (review `body` first):
+
+```sql
+UPDATE notes AS n
+SET body = r.body,
+    title = r.title,
+    updated_at = NOW()
+FROM note_revisions AS r
+WHERE n.id = r.note_id
+  AND r.id = $revision_id
+RETURNING n.id, length(n.body) AS body_len, n.updated_at;
+```
+
 ### Railway Postgres backups (ops)
 
-Product trash recovers user mistakes. For disasters (volume wipe / bad restore), enable **daily volume backups** on the Railway Postgres service:
+Product trash recovers user mistakes. Body revisions recover a bad overwrite within the retention window. For disasters (volume wipe / bad restore), enable **daily volume backups** on the Railway Postgres service:
 
 1. Railway → project → Postgres → **Backups** → schedule **Daily**.
 2. Optionally create a manual backup after enabling.
