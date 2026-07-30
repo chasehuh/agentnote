@@ -328,12 +328,17 @@ export async function updateNote(
   // Capture the pre-update body in the same statement as the overwrite so a
   // concurrent save cannot interleave between read and write. The UPDATE only
   // matches when `updated_at` still equals the client's expected token.
+  //
+  // Use FLOOR (not ::bigint rounding): clients send truncated ms via
+  // Date/toISOString, so half-up cast would false-409 ~50% of notes.
+  // Repeat the FLOOR gate on the UPDATE row so READ COMMITTED EPQ cannot
+  // let two same-token writers both win after the CTE snapshot.
   const result = await query<UpdatedNoteRow>(
     `WITH prev AS (
        SELECT id, title, body
        FROM notes
        WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-         AND (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $5::bigint
+         AND FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $5::bigint
      ),
      updated AS (
        UPDATE notes AS n
@@ -342,6 +347,7 @@ export async function updateNote(
            updated_at = NOW()
        FROM prev
        WHERE n.id = prev.id
+         AND FLOOR(EXTRACT(EPOCH FROM n.updated_at) * 1000)::bigint = $5::bigint
        RETURNING
          n.id, n.title, n.body, n.created_at, n.updated_at, n.deleted_at,
          n.is_public, n.public_id, n.published_at, n.author_handle,

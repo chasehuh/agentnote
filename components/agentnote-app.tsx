@@ -196,6 +196,8 @@ export function AgentNoteApp({
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryAttemptRef = useRef(0);
   const saveSeqRef = useRef(0);
+  /** In-flight persist promise — flush must await this to avoid self-409. */
+  const persistInFlightRef = useRef<Promise<boolean> | null>(null);
   const persistRef = useRef<
     (
       id: string,
@@ -452,139 +454,151 @@ export function AgentNoteApp({
       nextBody: string,
       opts?: { isRetry?: boolean },
     ): Promise<boolean> => {
-      const seq = ++saveSeqRef.current;
-      if (!opts?.isRetry) {
-        clearSaveRetry();
-      }
-      setSaveStateNow("saving");
+      const run = async (): Promise<boolean> => {
+        const seq = ++saveSeqRef.current;
+        if (!opts?.isRetry) {
+          clearSaveRetry();
+        }
+        setSaveStateNow("saving");
 
-      const scheduleRetry = () => {
-        const delay = nextRetryDelayMs(retryAttemptRef.current);
-        if (delay == null) return;
-        const attempt = retryAttemptRef.current;
-        retryAttemptRef.current = attempt + 1;
-        if (retryTimer.current) clearTimeout(retryTimer.current);
-        retryTimer.current = setTimeout(() => {
-          retryTimer.current = null;
-          if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) return;
-          if (activeIdRef.current !== id) return;
-          void persistRef.current(id, bodyRefState.current, {
-            isRetry: true,
-          });
-        }, delay);
-      };
+        const scheduleRetry = () => {
+          const delay = nextRetryDelayMs(retryAttemptRef.current);
+          if (delay == null) return;
+          const attempt = retryAttemptRef.current;
+          retryAttemptRef.current = attempt + 1;
+          if (retryTimer.current) clearTimeout(retryTimer.current);
+          retryTimer.current = setTimeout(() => {
+            retryTimer.current = null;
+            if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) return;
+            if (activeIdRef.current !== id) return;
+            void persistRef.current(id, bodyRefState.current, {
+              isRetry: true,
+            });
+          }, delay);
+        };
 
-      const expectedUpdatedAt = notesRef.current.find(
-        (note) => note.id === id,
-      )?.updated_at;
-      if (!expectedUpdatedAt) {
-        setSaveErrorKind("generic");
-        setSaveStateNow("error");
-        return false;
-      }
-
-      try {
-        const response = await fetch(`/api/notes/${id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: deriveTitle(nextBody),
-            body: nextBody,
-            expected_updated_at: expectedUpdatedAt,
-          }),
-        });
-
-        if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
+        const expectedUpdatedAt = notesRef.current.find(
+          (note) => note.id === id,
+        )?.updated_at;
+        if (!expectedUpdatedAt) {
+          setSaveErrorKind("generic");
+          setSaveStateNow("error");
           return false;
         }
 
-        const kind = classifySaveHttpStatus(response.status);
-        if (kind === "conflict") {
-          clearSaveRetry();
-          let conflictNote: Note | null = null;
-          try {
-            const data = (await response.json()) as { note?: Note };
-            conflictNote = data.note ?? null;
-          } catch {
-            conflictNote = null;
-          }
+        try {
+          const response = await fetch(`/api/notes/${id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: deriveTitle(nextBody),
+              body: nextBody,
+              expected_updated_at: expectedUpdatedAt,
+            }),
+          });
+
           if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
             return false;
           }
-          if (conflictNote) {
-            // Rebase concurrency token; keep local buffer so autosave does not
-            // treat server body as the editor and auto-PUT the stale short text.
-            const kept = noteAfterConflictKeepLocalBuffer(
-              conflictNote,
-              bodyRefState.current,
-              deriveTitle(bodyRefState.current),
-            ) as Note;
-            setNotes((prev) =>
-              sortNotesByRecent([
-                kept,
-                ...prev.filter((note) => note.id !== kept.id),
-              ]),
-            );
-          }
-          setSaveErrorKind("conflict");
-          setSaveStateNow("error");
-          return false;
-        }
 
-        if (kind !== "ok") {
-          setSaveErrorKind(kind);
-          setSaveStateNow("error");
-          if (kind === "auth" || !shouldAutoRetrySave(kind)) {
+          const kind = classifySaveHttpStatus(response.status);
+          if (kind === "conflict") {
             clearSaveRetry();
+            let conflictNote: Note | null = null;
+            try {
+              const data = (await response.json()) as { note?: Note };
+              conflictNote = data.note ?? null;
+            } catch {
+              conflictNote = null;
+            }
+            if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
+              return false;
+            }
+            if (conflictNote) {
+              // Rebase concurrency token; keep local buffer so autosave does not
+              // treat server body as the editor and auto-PUT the stale short text.
+              const kept = noteAfterConflictKeepLocalBuffer(
+                conflictNote,
+                bodyRefState.current,
+                deriveTitle(bodyRefState.current),
+              ) as Note;
+              setNotes((prev) =>
+                sortNotesByRecent([
+                  kept,
+                  ...prev.filter((note) => note.id !== kept.id),
+                ]),
+              );
+            }
+            setSaveErrorKind("conflict");
+            setSaveStateNow("error");
             return false;
           }
+
+          if (kind !== "ok") {
+            setSaveErrorKind(kind);
+            setSaveStateNow("error");
+            if (kind === "auth" || !shouldAutoRetrySave(kind)) {
+              clearSaveRetry();
+              return false;
+            }
+            scheduleRetry();
+            return false;
+          }
+
+          const data = (await response.json()) as { note: Note };
+          if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
+            return false;
+          }
+
+          clearSaveRetry();
+          setSaveErrorKind(null);
+          setNotes((prev) =>
+            sortNotesByRecent([
+              data.note,
+              ...prev.filter((note) => note.id !== data.note.id),
+            ]),
+          );
+
+          const ackedBody = substituteAsciiArrows(data.note.body).text;
+          if (shouldMarkSavedAfterPersist(nextBody, bodyRefState.current)) {
+            lastAckedBodyRef.current = ackedBody;
+            setSaveStateNow("saved");
+          } else {
+            // Buffer advanced during the in-flight PUT — stay dirty and ensure
+            // a follow-up persist is armed (issue #57 / H4).
+            setSaveStateNow("dirty");
+            if (!saveTimer.current) {
+              saveTimer.current = setTimeout(() => {
+                void persistRef.current(id, bodyRefState.current);
+              }, 400);
+            }
+          }
+
+          syncPost.current({
+            type: "upsert",
+            sourceId: tabId.current,
+            note: data.note,
+          });
+          return true;
+        } catch {
+          if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
+            return false;
+          }
+          setSaveErrorKind("generic");
+          setSaveStateNow("error");
           scheduleRetry();
           return false;
         }
+      };
 
-        const data = (await response.json()) as { note: Note };
-        if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
-          return false;
+      const promise = run();
+      persistInFlightRef.current = promise;
+      try {
+        return await promise;
+      } finally {
+        if (persistInFlightRef.current === promise) {
+          persistInFlightRef.current = null;
         }
-
-        clearSaveRetry();
-        setSaveErrorKind(null);
-        setNotes((prev) =>
-          sortNotesByRecent([
-            data.note,
-            ...prev.filter((note) => note.id !== data.note.id),
-          ]),
-        );
-
-        const ackedBody = substituteAsciiArrows(data.note.body).text;
-        if (shouldMarkSavedAfterPersist(nextBody, bodyRefState.current)) {
-          lastAckedBodyRef.current = ackedBody;
-          setSaveStateNow("saved");
-        } else {
-          // Buffer advanced during the in-flight PUT — stay dirty and ensure
-          // a follow-up persist is armed (issue #57 / H4).
-          setSaveStateNow("dirty");
-          if (!saveTimer.current) {
-            saveTimer.current = setTimeout(() => {
-              void persistRef.current(id, bodyRefState.current);
-            }, 400);
-          }
-        }
-
-        syncPost.current({
-          type: "upsert",
-          sourceId: tabId.current,
-          note: data.note,
-        });
-        return true;
-      } catch {
-        if (!isCurrentSaveAttempt(seq, saveSeqRef.current)) {
-          return false;
-        }
-        setSaveErrorKind("generic");
-        setSaveStateNow("error");
-        scheduleRetry();
-        return false;
       }
     },
     [clearSaveRetry, setSaveStateNow],
@@ -608,6 +622,13 @@ export function AgentNoteApp({
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
+    }
+    // Await in-flight PUT first — a second same-token PUT races under
+    // optimistic concurrency and surfaces a self-409 discard prompt (#57).
+    if (persistInFlightRef.current) {
+      await persistInFlightRef.current;
+      if (activeIdRef.current !== id) return false;
+      if (!hasUnsavedWork(saveStateRef.current)) return true;
     }
     clearSaveRetry();
     return persist(id, bodyRefState.current);
@@ -773,12 +794,15 @@ export function AgentNoteApp({
             const fallback = next[0] ?? null;
             skipNextSave.current = true;
             if (fallback) {
+              const nextBody = substituteAsciiArrows(fallback.body).text;
               setActiveId(fallback.id);
-              setBodyNow(substituteAsciiArrows(fallback.body).text);
+              setBodyNow(nextBody);
+              lastAckedBodyRef.current = nextBody;
               replaceNoteUrl(fallback.id);
             } else {
               setActiveId(null);
               setBodyNow("");
+              lastAckedBodyRef.current = "";
               replaceNoteUrl(null);
             }
             setSaveStateNow("saved");
@@ -809,12 +833,15 @@ export function AgentNoteApp({
             const fallback = next[0] ?? null;
             skipNextSave.current = true;
             if (fallback) {
+              const nextBody = substituteAsciiArrows(fallback.body).text;
               setActiveId(fallback.id);
-              setBodyNow(substituteAsciiArrows(fallback.body).text);
+              setBodyNow(nextBody);
+              lastAckedBodyRef.current = nextBody;
               replaceNoteUrl(fallback.id);
             } else {
               setActiveId(null);
               setBodyNow("");
+              lastAckedBodyRef.current = "";
               replaceNoteUrl(null);
             }
             setSaveStateNow("saved");

@@ -153,8 +153,46 @@ describe("updateNote revisions", () => {
     expect(updateSql).toContain("WITH prev AS");
     expect(updateSql).toContain("prev.body AS prev_body");
     expect(updateSql).toContain("UPDATE notes");
-    expect(updateSql).toContain("EXTRACT(EPOCH FROM updated_at)");
+    // FLOOR matches client truncated ms; bare ::bigint rounds and false-409s.
+    expect(updateSql).toContain(
+      "FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint",
+    );
+    expect(updateSql).toContain(
+      "FLOOR(EXTRACT(EPOCH FROM n.updated_at) * 1000)::bigint",
+    );
+    // Version gate must appear on both CTE filter and UPDATE WHERE (EPQ).
+    const floorMatches = updateSql.match(
+      /FLOOR\(EXTRACT\(EPOCH FROM (?:n\.)?updated_at\) \* 1000\)::bigint/g,
+    );
+    expect(floorMatches?.length).toBeGreaterThanOrEqual(2);
     expect(updateParams?.[4]).toBe(BASE_UPDATED_MS);
+  });
+
+  it("documents FLOOR vs round for client truncated ms tokens", async () => {
+    // Clients send Date.parse / toISOString ms (truncated). Postgres
+    // `(x)::bigint` rounds half away from zero; FLOOR truncates toward -∞.
+    // A sub-ms fractional epoch of *.5 must not round up to a different token.
+    const fractionalEpochMs = 1_753_876_800_000.5;
+    const clientToken = Math.floor(fractionalEpochMs); // Date/toISOString style
+    const pgRoundCast = Math.round(fractionalEpochMs);
+    const pgFloorCast = Math.floor(fractionalEpochMs);
+    expect(pgRoundCast).not.toBe(clientToken);
+    expect(pgFloorCast).toBe(clientToken);
+
+    // Guard the live SQL source — mock-only row tests cannot catch a missing FLOOR.
+    const notesSource = await import("node:fs").then((fs) =>
+      fs.readFileSync(new URL("./notes.ts", import.meta.url), "utf8"),
+    );
+    expect(notesSource).toContain(
+      "FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint",
+    );
+    expect(notesSource).toContain(
+      "FLOOR(EXTRACT(EPOCH FROM n.updated_at) * 1000)::bigint",
+    );
+    // Reject the pre-fix round-cast form (no FLOOR prefix).
+    expect(notesSource).not.toMatch(
+      /(?<!FLOOR)\(EXTRACT\(EPOCH FROM updated_at\) \* 1000\)::bigint/,
+    );
   });
 
   it("returns conflict without revising when expected_updated_at is stale", async () => {
