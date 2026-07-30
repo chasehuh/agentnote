@@ -42,15 +42,37 @@ export async function PUT(request: Request, { params }: Params) {
     const payload = (await request.json()) as {
       title?: string;
       body?: string;
+      expected_updated_at?: string;
     };
-    const note = await updateNote(authResult.userId, id, {
+
+    const expectedUpdatedAt =
+      typeof payload.expected_updated_at === "string"
+        ? payload.expected_updated_at.trim()
+        : "";
+    // Fail closed: old clients without a concurrency token must not LWW-write.
+    if (!expectedUpdatedAt) {
+      return NextResponse.json(
+        { error: "expected_updated_at is required" },
+        { status: 400 },
+      );
+    }
+
+    const result = await updateNote(authResult.userId, id, {
       title: payload.title ?? "",
       body: payload.body ?? "",
+      expectedUpdatedAt,
     });
-    if (!note) {
+
+    if (result.status === "not_found") {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    return NextResponse.json({ note });
+    if (result.status === "conflict") {
+      return NextResponse.json(
+        { error: "Conflict", note: result.note },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({ note: result.note });
   } catch (error) {
     console.error("update note failed", error);
     return NextResponse.json({ error: "Failed to update note" }, { status: 500 });

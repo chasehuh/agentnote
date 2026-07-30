@@ -1,6 +1,6 @@
 import type { RemoteSaveState } from "./remote-apply-guard";
 
-export type SaveFailureKind = "generic" | "auth";
+export type SaveFailureKind = "generic" | "auth" | "conflict";
 
 /** Backoff delays (ms) for automatic retries after a failed save. */
 export const SAVE_RETRY_BACKOFF_MS = [1000, 2000, 4000, 8000] as const;
@@ -19,6 +19,7 @@ export function classifySaveHttpStatus(
 ): "ok" | SaveFailureKind {
   if (status >= 200 && status < 300) return "ok";
   if (status === 401) return "auth";
+  if (status === 409) return "conflict";
   return "generic";
 }
 
@@ -39,4 +40,9 @@ export function isCurrentSaveAttempt(
   latestSeq: number,
 ): boolean {
   return attemptSeq === latestSeq;
+}
+
+/** Conflict must not auto-retry — rebasing + PUT would recreate LWW loss. */
+export function shouldAutoRetrySave(kind: SaveFailureKind): boolean {
+  return kind === "generic";
 }

@@ -289,21 +289,56 @@ export async function createNote(
   throw new Error("Failed to allocate note id");
 }
 
+export type UpdateNoteInput = {
+  title: string;
+  body: string;
+  /**
+   * Client's last-known server `updated_at` (ISO). Required for optimistic
+   * concurrency — stale writers must not LWW-clobber a newer body.
+   */
+  expectedUpdatedAt: string;
+};
+
+export type UpdateNoteResult =
+  | { status: "ok"; note: Note }
+  | { status: "conflict"; note: Note }
+  | { status: "not_found" };
+
+/** Millisecond epoch for concurrency tokens (avoids timestamptz µs skew). */
+export function updatedAtToEpochMs(value: string): number | null {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 export async function updateNote(
   userId: string,
   id: string,
-  input: { title: string; body: string },
-): Promise<Note | null> {
+  input: UpdateNoteInput,
+): Promise<UpdateNoteResult> {
   const canonicalId = await resolveCanonicalNoteId(userId, id);
-  if (!canonicalId) return null;
+  if (!canonicalId) return { status: "not_found" };
+
+  const expectedMs = updatedAtToEpochMs(input.expectedUpdatedAt);
+  if (expectedMs == null) {
+    const current = await getNote(userId, canonicalId);
+    if (!current) return { status: "not_found" };
+    return { status: "conflict", note: current };
+  }
 
   // Capture the pre-update body in the same statement as the overwrite so a
-  // concurrent save cannot interleave between read and write.
+  // concurrent save cannot interleave between read and write. The UPDATE only
+  // matches when `updated_at` still equals the client's expected token.
+  //
+  // Use FLOOR (not ::bigint rounding): clients send truncated ms via
+  // Date/toISOString, so half-up cast would false-409 ~50% of notes.
+  // Repeat the FLOOR gate on the UPDATE row so READ COMMITTED EPQ cannot
+  // let two same-token writers both win after the CTE snapshot.
   const result = await query<UpdatedNoteRow>(
     `WITH prev AS (
        SELECT id, title, body
        FROM notes
        WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+         AND FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::bigint = $5::bigint
      ),
      updated AS (
        UPDATE notes AS n
@@ -312,6 +347,7 @@ export async function updateNote(
            updated_at = NOW()
        FROM prev
        WHERE n.id = prev.id
+         AND FLOOR(EXTRACT(EPOCH FROM n.updated_at) * 1000)::bigint = $5::bigint
        RETURNING
          n.id, n.title, n.body, n.created_at, n.updated_at, n.deleted_at,
          n.is_public, n.public_id, n.published_at, n.author_handle,
@@ -319,10 +355,14 @@ export async function updateNote(
          prev.body AS prev_body
      )
      SELECT * FROM updated`,
-    [canonicalId, userId, input.title, input.body],
+    [canonicalId, userId, input.title, input.body, expectedMs],
   );
   const row = result.rows[0];
-  if (!row) return null;
+  if (!row) {
+    const current = await getNote(userId, canonicalId);
+    if (!current) return { status: "not_found" };
+    return { status: "conflict", note: current };
+  }
 
   if (shouldRecordBodyRevision(row.prev_body, input.body)) {
     // Revision failure must not fail the user's save.
@@ -334,7 +374,7 @@ export async function updateNote(
     });
   }
 
-  return mapNote(row);
+  return { status: "ok", note: mapNote(row) };
 }
 
 /** List body revisions for a note (newest first). Operator / recovery helper. */

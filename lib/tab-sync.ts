@@ -10,6 +10,13 @@ export type SyncMessage =
       body: string;
       title: string;
       at: number;
+      /**
+       * Server `updated_at` the drafting tab last acknowledged.
+       * Receivers reject editor apply when this does not match local.
+       */
+      baseUpdatedAt?: string;
+      /** Monotonic per-tab draft sequence for out-of-order ignore. */
+      draftSeq?: number;
     }
   | {
       type: "upsert";
