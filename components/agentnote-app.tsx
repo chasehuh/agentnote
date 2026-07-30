@@ -9,6 +9,7 @@ import {
   isWrapPreference,
 } from "@/lib/preferences";
 import {
+  canAdvanceBaseWithoutAdopting,
   canApplyRemoteBody,
   isDraftBaseCurrent,
   isRemoteNoteNewer,
@@ -216,6 +217,14 @@ export function AgentNoteApp({
   const saveStateRef = useRef(saveState);
   const notesRef = useRef(notes);
   const lastAckedBodyRef = useRef(body);
+  /**
+   * Server generation the editor buffer is based on. Advances only when the
+   * buffer adopts server state (open / clean remote apply / own ack), never
+   * from a refused remote body — see `persist`.
+   */
+  const baseUpdatedAtRef = useRef(
+    resolveInitialNote(initialNotes, initialSelectedId)?.updated_at ?? "",
+  );
 
   activeIdRef.current = activeId;
   bodyRefState.current = body;
@@ -257,6 +266,16 @@ export function AgentNoteApp({
     );
 
     if (activeIdRef.current !== note.id) return;
+
+    const nextBody = substituteAsciiArrows(note.body).text;
+    // Body-neutral generation bump (publish / unpublish / restore rewrite only
+    // `updated_at`): the server body our buffer is based on is unchanged, so
+    // advance the token even while dirty — otherwise the next save would be a
+    // false conflict.
+    if (canAdvanceBaseWithoutAdopting(nextBody, lastAckedBodyRef.current)) {
+      baseUpdatedAtRef.current = note.updated_at;
+    }
+
     if (
       !canApplyRemoteBody(saveStateRef.current, {
         ...opts,
@@ -266,14 +285,15 @@ export function AgentNoteApp({
     ) {
       return;
     }
-    const nextBody = substituteAsciiArrows(note.body).text;
     if (bodyRefState.current === nextBody) {
       lastAckedBodyRef.current = nextBody;
+      baseUpdatedAtRef.current = note.updated_at;
       return;
     }
     skipNextSave.current = true;
     setBodyNow(nextBody);
     lastAckedBodyRef.current = nextBody;
+    baseUpdatedAtRef.current = note.updated_at;
     setSaveErrorKind(null);
     setSaveStateNow("saved");
   }, [setBodyNow, setSaveStateNow]);
@@ -338,6 +358,9 @@ export function AgentNoteApp({
       skipNextSave.current = true;
       setBodyNow(nextBody);
       lastAckedBodyRef.current = nextBody;
+      // A draft is unsaved peer text — the gate above proved the generation is
+      // unchanged, so the base stays at that same generation.
+      baseUpdatedAtRef.current = existing.updated_at;
       setSaveErrorKind(null);
       setSaveStateNow("saved");
     },
@@ -425,6 +448,7 @@ export function AgentNoteApp({
       setActiveId(note.id);
       setBodyNow(nextBody);
       lastAckedBodyRef.current = nextBody;
+      baseUpdatedAtRef.current = note.updated_at;
       setSaveErrorKind(null);
       setSaveStateNow(nextBody === note.body ? "saved" : "dirty");
       replaceNoteUrl(note.id);
@@ -443,6 +467,7 @@ export function AgentNoteApp({
     setActiveId(null);
     setBodyNow("");
     lastAckedBodyRef.current = "";
+    baseUpdatedAtRef.current = "";
     setSaveErrorKind(null);
     setSaveStateNow("saved");
     replaceNoteUrl(null);
@@ -477,9 +502,11 @@ export function AgentNoteApp({
           }, delay);
         };
 
-        const expectedUpdatedAt = notesRef.current.find(
-          (note) => note.id === id,
-        )?.updated_at;
+        // The generation this buffer was based on — NOT the newest list row.
+        // A poll/broadcast that refreshes the row while refusing the remote
+        // body (local unsaved work wins) would otherwise hand a stale buffer a
+        // valid token and silently truncate the newer server body (issue #57).
+        const expectedUpdatedAt = baseUpdatedAtRef.current;
         if (!expectedUpdatedAt) {
           setSaveErrorKind("generic");
           setSaveStateNow("error");
@@ -522,6 +549,9 @@ export function AgentNoteApp({
                 bodyRefState.current,
                 deriveTitle(bodyRefState.current),
               ) as Note;
+              // Rebase the base generation too, so an explicit Retry can win.
+              // Deliberate: only a user action re-sends this buffer.
+              baseUpdatedAtRef.current = conflictNote.updated_at;
               setNotes((prev) =>
                 sortNotesByRecent([
                   kept,
@@ -558,6 +588,10 @@ export function AgentNoteApp({
               ...prev.filter((note) => note.id !== data.note.id),
             ]),
           );
+
+          // Our write landed: the server is now at this generation regardless of
+          // whether the buffer has since advanced.
+          baseUpdatedAtRef.current = data.note.updated_at;
 
           const ackedBody = substituteAsciiArrows(data.note.body).text;
           if (shouldMarkSavedAfterPersist(nextBody, bodyRefState.current)) {
@@ -629,6 +663,13 @@ export function AgentNoteApp({
       await persistInFlightRef.current;
       if (activeIdRef.current !== id) return false;
       if (!hasUnsavedWork(saveStateRef.current)) return true;
+      // That persist may have armed its own follow-up timer when the buffer
+      // advanced mid-flight. Drop it, or it fires during our PUT below and
+      // races a duplicate same-token write into a self-409 (issue #57).
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
     }
     clearSaveRetry();
     return persist(id, bodyRefState.current);
@@ -798,11 +839,13 @@ export function AgentNoteApp({
               setActiveId(fallback.id);
               setBodyNow(nextBody);
               lastAckedBodyRef.current = nextBody;
+              baseUpdatedAtRef.current = fallback.updated_at;
               replaceNoteUrl(fallback.id);
             } else {
               setActiveId(null);
               setBodyNow("");
               lastAckedBodyRef.current = "";
+              baseUpdatedAtRef.current = "";
               replaceNoteUrl(null);
             }
             setSaveStateNow("saved");
@@ -837,11 +880,13 @@ export function AgentNoteApp({
               setActiveId(fallback.id);
               setBodyNow(nextBody);
               lastAckedBodyRef.current = nextBody;
+              baseUpdatedAtRef.current = fallback.updated_at;
               replaceNoteUrl(fallback.id);
             } else {
               setActiveId(null);
               setBodyNow("");
               lastAckedBodyRef.current = "";
+              baseUpdatedAtRef.current = "";
               replaceNoteUrl(null);
             }
             setSaveStateNow("saved");
@@ -1297,6 +1342,11 @@ export function AgentNoteApp({
               ...prev.filter((item) => item.id !== note.id),
             ]),
           );
+          // Publish/unpublish bumps `updated_at` without touching the body —
+          // advance the base so the next save is not a false conflict (#57).
+          if (activeIdRef.current === note.id) {
+            baseUpdatedAtRef.current = note.updated_at;
+          }
           syncPost.current({
             type: "upsert",
             sourceId: tabId.current,

@@ -66,6 +66,24 @@ export function shouldMarkSavedAfterPersist(
 }
 
 /**
+ * Whether a remote note whose body was NOT adopted into the buffer may still
+ * advance the editor's base concurrency token.
+ *
+ * Only body-neutral generation bumps qualify — publish / unpublish / restore
+ * rewrite `updated_at` without touching the body, so the base the buffer was
+ * built on still matches the server. When the remote body *did* change, the
+ * base must stay put: taking that fresh token would hand a stale buffer a valid
+ * ticket and silently truncate the newer server body on the next PUT — the
+ * exact stale-tab truncation issue #57 is about.
+ */
+export function canAdvanceBaseWithoutAdopting(
+  remoteBody: string,
+  lastAckedBody: string,
+): boolean {
+  return remoteBody === lastAckedBody;
+}
+
+/**
  * Peer draft may update a clean editor only when it shares the same server
  * generation (`updated_at`) the drafting tab last knew. Missing base fails
  * closed so stale bundles cannot shrink a clean tab (issue #57).
