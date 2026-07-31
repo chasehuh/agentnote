@@ -136,8 +136,11 @@ Endpoints (both Clerk-authenticated, both resolve the id **through `user_id`**):
 
 Transport in this phase is the existing HTTP + 1.5 s visible-tab poll, plus a `doc-update` BroadcastChannel message that converges peer tabs in about one frame. No new infrastructure.
 
+**Local-first.** Each open note is mirrored into IndexedDB under `agentnote.note.{userId}.{noteId}` (`y-indexeddb`), so a reload or a dropped connection loses nothing. On load the client applies the server state and then pushes back anything the server has never seen — offline edits are reconciled, not just overwritten. Reconnecting (`online`, tab focus, or the next poll) flushes whatever queued. While the server is unreachable the editor stays fully usable and the header reads **Offline — saved on this device**.
+
 Operational notes:
 
+- **Clearing site data drops unsynced offline edits.** Everything that reached the server is safe; anything typed while offline and never flushed lives only in IndexedDB.
 - **The flag is effectively one-way per note.** Once a note has been opened with the flag on, a snapshot row exists and legacy whole-document `PUT`s for it are refused with `409 { "reason": "crdt_managed_body" }`. Turning the flag back off leaves those notes readable and publishable but not body-editable. To un-seed a note, write its projected body back and drop its doc rows:
 
   ```sql

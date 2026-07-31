@@ -5,7 +5,8 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { createTabId, openSyncChannel } from "../tab-sync";
 import { createCompositionGate } from "./composition-gate";
-import { NOTE_TEXT_KEY } from "./note-doc";
+import { openLocalNoteDoc } from "./local-persistence";
+import { NOTE_TEXT_KEY, encodeMissingUpdate } from "./note-doc";
 import { fetchNoteDocState, pushNoteDocSync } from "./sync-transport";
 
 /** Batch local edits before one POST — mirrors the legacy autosave feel. */
@@ -81,6 +82,8 @@ export function useNoteDoc(options: {
     const ytext = doc.getText(NOTE_TEXT_KEY);
     // Single local client in Phase 1; Phase 3 turns this into remote cursors.
     const awareness = new Awareness(doc);
+    // Local-first copy: survives reload and keeps offline edits recoverable.
+    const persistence = openLocalNoteDoc(userId, noteId, doc);
 
     let disposed = false;
     /** Server head this client has folded in; `null` until the first load. */
@@ -168,6 +171,7 @@ export function useNoteDoc(options: {
         try {
           const remote = await fetchNoteDocState(noteId);
           if (disposed) return;
+          const serverVector = Y.encodeStateVectorFromUpdate(remote.update);
           applyRemote(remote.update, REMOTE_ORIGIN);
           seq = remote.seq;
           setState({
@@ -177,6 +181,10 @@ export function useNoteDoc(options: {
             status: "synced",
             text: ytext.toString(),
           });
+          // Anything this device holds that the server has never seen — offline
+          // edits restored from IndexedDB — has to be pushed, not just pulled.
+          const unsent = encodeMissingUpdate(doc, serverVector);
+          if (unsent) pending.push(unsent);
           if (pending.length > 0) schedulePush();
         } catch {
           setStatus("offline");
@@ -186,6 +194,31 @@ export function useNoteDoc(options: {
         loading = null;
       });
       return loading;
+    };
+
+    /**
+     * Restore the local copy first: an offline reload stays editable, and the
+     * server load below reconciles whatever it has not seen.
+     */
+    const bootstrap = async () => {
+      if (persistence) {
+        try {
+          await persistence.whenSynced;
+        } catch {
+          // Storage blocked mid-flight — fall through to the network load.
+        }
+        if (disposed) return;
+        if (ytext.length > 0) {
+          setState({
+            noteId,
+            ytext,
+            awareness,
+            status: "syncing",
+            text: ytext.toString(),
+          });
+        }
+      }
+      await load();
     };
 
     const tick = () => (seq === null ? load() : sync());
@@ -207,6 +240,9 @@ export function useNoteDoc(options: {
 
     const onDocUpdate = (update: Uint8Array, origin: unknown) => {
       if (origin === REMOTE_ORIGIN || origin === BROADCAST_ORIGIN) return;
+      // IndexedDB replaying its stored state is not a new edit; `load()`
+      // reconciles whatever the server is missing from it.
+      if (persistence && origin === persistence) return;
       pending.push(update);
       // Peer tabs converge in ~1 frame; duplicate and out-of-order delivery are
       // both correct inputs to a CRDT, so no sequencing is needed.
@@ -235,11 +271,13 @@ export function useNoteDoc(options: {
       await sync();
     };
 
-    void load();
+    void bootstrap();
 
     const onVisible = () => {
       if (document.visibilityState === "visible") void tick();
     };
+    /** Reconnect: flush whatever queued while the network was down. */
+    const onOnline = () => void tick();
     const onCompositionStart = () => imeGate.start();
     const onCompositionEnd = () => imeGate.end();
     const poll = window.setInterval(onVisible, DOC_POLL_MS);
@@ -247,6 +285,7 @@ export function useNoteDoc(options: {
     document.addEventListener("compositionstart", onCompositionStart, true);
     document.addEventListener("compositionend", onCompositionEnd, true);
     window.addEventListener("focus", onVisible);
+    window.addEventListener("online", onOnline);
     window.addEventListener("pagehide", flushBeacon);
 
     return () => {
@@ -261,14 +300,17 @@ export function useNoteDoc(options: {
       );
       document.removeEventListener("compositionend", onCompositionEnd, true);
       window.removeEventListener("focus", onVisible);
+      window.removeEventListener("online", onOnline);
       window.removeEventListener("pagehide", flushBeacon);
       doc.off("update", onDocUpdate);
       ytext.unobserve(observer);
       channel.close();
       flushRef.current = async () => {};
-      // Switching notes must not strand queued edits.
+      // Switching notes must not strand queued edits. Anything that does not
+      // make it out stays in IndexedDB and is reconciled on the next load.
       flushBeacon();
       awareness.destroy();
+      void persistence?.destroy();
       doc.destroy();
     };
   }, [enabled, noteId, userId, tabId]);

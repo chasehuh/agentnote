@@ -1135,6 +1135,23 @@ export function AgentNoteApp({
     ? previewTitle({ title: deriveNoteTitle(displayBody), body: displayBody })
     : "agentnote";
 
+  // CRDT edits are already durable in IndexedDB, so a failed sync is "not sent
+  // yet", not "not saved" — say so rather than reusing the legacy wording.
+  const saveErrorLabel = CRDT_ENABLED
+    ? "Offline"
+    : displaySaveErrorKind === "auth"
+      ? "Sign in to save"
+      : displaySaveErrorKind === "conflict"
+        ? "Conflict"
+        : "Not saved";
+  const saveErrorTitle = CRDT_ENABLED
+    ? "Saved on this device — syncs when the connection returns"
+    : displaySaveErrorKind === "auth"
+      ? "Session expired — sign in again to save"
+      : displaySaveErrorKind === "conflict"
+        ? "Another tab saved this note — Retry overwrites with your version"
+        : "Latest changes are not saved";
+
   // Browser tab: page title only (Notion-style). Shell stays "agentnote".
   useEffect(() => {
     document.title = tabTitle;
@@ -1200,24 +1217,8 @@ export function AgentNoteApp({
           {activeNote?.is_public ? "Published" : "Publish"}
         </button>
         {displaySaveState === "error" ? (
-          <div
-            className="zed-save-error"
-            role="alert"
-            title={
-              displaySaveErrorKind === "auth"
-                ? "Session expired — sign in again to save"
-                : displaySaveErrorKind === "conflict"
-                  ? "Another tab saved this note — Retry overwrites with your version"
-                  : "Latest changes are not saved"
-            }
-          >
-            <span>
-              {displaySaveErrorKind === "auth"
-                ? "Sign in to save"
-                : displaySaveErrorKind === "conflict"
-                  ? "Conflict"
-                  : "Not saved"}
-            </span>
+          <div className="zed-save-error" role="alert" title={saveErrorTitle}>
+            <span>{saveErrorLabel}</span>
             {displaySaveErrorKind === "auth" ? (
               <a className="zed-save-error__action" href="/login">
                 Sign in
@@ -1276,7 +1277,9 @@ export function AgentNoteApp({
                     : previewTitle(note);
                 const updatedLabel =
                   note.id === activeId && displaySaveState === "error"
-                    ? "Not saved"
+                    ? CRDT_ENABLED
+                      ? "Offline"
+                      : "Not saved"
                     : note.id === activeId &&
                         (displaySaveState === "dirty" ||
                           displaySaveState === "saving")
