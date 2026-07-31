@@ -100,14 +100,31 @@ export function docBodyFromState(state: Uint8Array): string {
 }
 
 /**
- * The diff a client at `clientStateVector` is missing, or `null` when it is
- * already current (or asked for nothing).
+ * The diff a peer at `targetStateVector` is missing from this doc, or `null`
+ * when the peer already has everything (or asked for nothing).
+ *
+ * Used in both directions: the server answers a client's state vector with it,
+ * and the client uses it to push offline work the server has never seen.
+ * Compares per-client clocks rather than whole state vectors — a peer that is
+ * merely *ahead* of us is not missing anything, and must not be sent an
+ * effectively empty update that would still cost a log row.
  */
 export function encodeMissingUpdate(
   doc: Y.Doc,
-  clientStateVector: Uint8Array | null,
+  targetStateVector: Uint8Array | null,
 ): Uint8Array | null {
-  if (!clientStateVector) return null;
-  if (bytesEqual(Y.encodeStateVector(doc), clientStateVector)) return null;
-  return Y.encodeStateAsUpdate(doc, clientStateVector);
+  if (!targetStateVector) return null;
+
+  const target = Y.decodeStateVector(targetStateVector);
+  const local = Y.decodeStateVector(Y.encodeStateVector(doc));
+  let missing = false;
+  for (const [client, clock] of local) {
+    if ((target.get(client) ?? 0) < clock) {
+      missing = true;
+      break;
+    }
+  }
+  if (!missing) return null;
+
+  return Y.encodeStateAsUpdate(doc, targetStateVector);
 }
