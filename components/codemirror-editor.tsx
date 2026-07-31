@@ -19,6 +19,9 @@ import {
 } from "@codemirror/commands";
 import { indentUnit } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
+import { yCollab, yUndoManagerKeymap } from "y-codemirror.next";
+import type { Awareness } from "y-protocols/awareness";
+import type * as Y from "yjs";
 import { applyExternalValue } from "@/lib/editor/apply-external";
 import { arrowInputHandler, arrowPasteFilter } from "@/lib/editor/arrow-input";
 import { imageWidgets } from "@/lib/editor/image-widgets";
@@ -38,8 +41,15 @@ import {
 import { indentedLineWrapping } from "@/lib/editor/wrap-indent";
 
 type CodeMirrorEditorProps = {
-  value: string;
+  value?: string;
   wrap: boolean;
+  /**
+   * CRDT-backed body. When set, CM6 is driven by `yCollab` — `value`,
+   * `onChange`, and `onExternalReconcile` are ignored, and undo/redo moves to
+   * `Y.UndoManager` so exactly one history implementation is active.
+   */
+  ytext?: Y.Text;
+  awareness?: Awareness | null;
   onChange?: (value: string) => void;
   /**
    * Called when an external `value` cannot be applied (selection conflict /
@@ -71,12 +81,20 @@ function editorExtensions(
   onChangeRef: { current: ((value: string) => void) | undefined },
   applyingExternal: { current: boolean },
   readOnly: boolean,
+  ytext: Y.Text | undefined,
+  awareness: Awareness | null | undefined,
 ) {
   return [
     lineNumbers(),
     ...(readOnly
       ? []
-      : [highlightActiveLine(), highlightActiveLineGutter(), history()]),
+      : [
+          highlightActiveLine(),
+          highlightActiveLineGutter(),
+          // yCollab installs its own undo/redo — stacking CM history() on top
+          // makes ⌘Z fight itself.
+          ...(ytext ? [] : [history()]),
+        ]),
     drawSelection(),
     markdown({ extensions: agentnoteStrikethroughMarkdown }),
     agentnoteStrikethroughHighlight(),
@@ -105,7 +123,7 @@ function editorExtensions(
                 agentnoteListIndentOnTab(view) || insertSoftTab(view),
               shift: agentnoteListOutdentOnShiftTab,
             },
-            ...historyKeymap,
+            ...(ytext ? yUndoManagerKeymap : historyKeymap),
             ...defaultKeymap.filter((binding) => {
               const key = "key" in binding ? binding.key : null;
               // Tab overridden above; mac Mod-Backspace replaced by agentnoteLineKillKeymap
@@ -124,8 +142,14 @@ function editorExtensions(
     imageWidgets,
     // Zed-like one_page: content-only spacer so gutters stay CM-owned geometry
     scrollPastEnd(),
+    // Remote updates arrive as CM transactions, so caret, scroll, and IME
+    // composition are preserved by construction — no applyExternalValue.
+    ...(ytext && !readOnly ? [yCollab(ytext, awareness ?? null)] : []),
     EditorView.updateListener.of((update) => {
-      if (readOnly || !update.docChanged || applyingExternal.current) return;
+      // CRDT mode mirrors text through the Y.Text observer instead.
+      if (readOnly || ytext || !update.docChanged || applyingExternal.current) {
+        return;
+      }
       onChangeRef.current?.(update.state.doc.toString());
     }),
     EditorView.theme({
@@ -202,8 +226,10 @@ function editorExtensions(
 }
 
 export function CodeMirrorEditor({
-  value,
+  value = "",
   wrap,
+  ytext,
+  awareness,
   onChange,
   onExternalReconcile,
   autoFocus = false,
@@ -225,7 +251,7 @@ export function CodeMirrorEditor({
 
     const view = new EditorView({
       state: EditorState.create({
-        doc: value,
+        doc: ytext ? ytext.toString() : value,
         extensions: editorExtensions(
           wrap,
           wrapCompartment.current,
@@ -233,6 +259,8 @@ export function CodeMirrorEditor({
           onChangeRef,
           applyingExternal,
           readOnly,
+          ytext,
+          awareness,
         ),
       }),
       parent: hostRef.current,
@@ -262,6 +290,8 @@ export function CodeMirrorEditor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
+    // yCollab owns the document in CRDT mode; `value` is not the source of truth.
+    if (ytext) return;
     if (view.state.doc.toString() === value) return;
     applyingExternal.current = true;
     try {
@@ -279,7 +309,7 @@ export function CodeMirrorEditor({
     } finally {
       applyingExternal.current = false;
     }
-  }, [value]);
+  }, [value, ytext]);
 
   return <div className="zed-cm-host" ref={hostRef} />;
 }

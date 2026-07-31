@@ -38,6 +38,17 @@ export type SyncMessage =
       type: "restore";
       sourceId: string;
       note: Note;
+    }
+  | {
+      /**
+       * Binary Yjs update for a CRDT-backed note, mirrored to peer tabs
+       * instantly. Structured clone handles `Uint8Array` natively. No sequence
+       * number: duplicate and out-of-order delivery are correct CRDT inputs.
+       */
+      type: "doc-update";
+      sourceId: string;
+      id: string;
+      update: Uint8Array;
     };
 
 export function createTabId() {

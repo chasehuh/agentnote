@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Note } from "@/lib/types";
 import { substituteAsciiArrows } from "@/lib/arrows";
 import {
+  useNoteDoc,
+  type NoteDocProjection,
+} from "@/lib/crdt/use-note-doc";
+import { deriveNoteTitle } from "@/lib/note-title";
+import {
   DEFAULT_WRAP,
   WRAP_STORAGE_KEY,
   isWrapPreference,
@@ -58,6 +63,12 @@ type SaveState = "saved" | "saving" | "dirty" | "error";
 
 const POLL_MS = 1500;
 const DRAFT_BROADCAST_MS = 32;
+/**
+ * Route the note body through the Yjs CRDT instead of whole-document `PUT`.
+ * Off restores the legacy optimistic-concurrency path exactly; note that a note
+ * already seeded server-side stays CRDT-managed (see README).
+ */
+const CRDT_ENABLED = process.env.NEXT_PUBLIC_AGENTNOTE_CRDT === "1";
 /** Phone-width only — keep tablet/desktop browser windows on the desktop layout. */
 const NARROW_QUERY = "(max-width: 480px)";
 
@@ -72,10 +83,6 @@ function previewTitle(note: Pick<Note, "title" | "body">) {
   if (fromTitle) return fromTitle;
   const firstLine = note.body.split("\n").find((line) => line.trim());
   return firstLine?.trim() || "Untitled";
-}
-
-function deriveTitle(body: string) {
-  return body.split("\n").find((line) => line.trim())?.trim().slice(0, 120) ?? "";
 }
 
 function sortNotesByRecent(notes: Note[]) {
@@ -251,6 +258,59 @@ export function AgentNoteApp({
     setSaveState(next);
   }, []);
 
+  /** Refresh the sidebar row from the server's plaintext projection of the CRDT. */
+  const applyDocProjection = useCallback((projection: NoteDocProjection) => {
+    setNotes((prev) => {
+      const current = prev.find((item) => item.id === projection.noteId);
+      if (!current) return prev;
+      if (
+        current.body === projection.body &&
+        current.updated_at === projection.updatedAt
+      ) {
+        return prev;
+      }
+      return sortNotesByRecent([
+        {
+          ...current,
+          title: deriveNoteTitle(projection.body),
+          body: projection.body,
+          updated_at: projection.updatedAt,
+        },
+        ...prev.filter((item) => item.id !== projection.noteId),
+      ]);
+    });
+    if (activeIdRef.current === projection.noteId) {
+      // Keep the legacy tokens coherent so publish/archive still work.
+      lastAckedBodyRef.current = projection.body;
+      baseUpdatedAtRef.current = projection.updatedAt;
+    }
+  }, []);
+
+  const docSession = useNoteDoc({
+    noteId: CRDT_ENABLED ? activeId : null,
+    userId,
+    enabled: CRDT_ENABLED,
+    onProjection: applyDocProjection,
+  });
+  const docFlush = docSession.flush;
+  /** The Y.Doc owns the body once it is bound; React state only mirrors it. */
+  const displayBody =
+    CRDT_ENABLED && docSession.ytext ? docSession.text : body;
+  /**
+   * The CRDT path has no dirty/conflict states — edits always merge, so the
+   * only failure worth surfacing is "the server is unreachable".
+   */
+  const displaySaveState: SaveState = CRDT_ENABLED
+    ? docSession.status === "offline"
+      ? "error"
+      : "saved"
+    : saveState;
+  const displaySaveErrorKind: SaveFailureKind | null = CRDT_ENABLED
+    ? docSession.status === "offline"
+      ? "generic"
+      : null
+    : saveErrorKind;
+
   const applyRemoteNote = useCallback((note: Note, opts?: { forceBody?: boolean }) => {
     const existing = notesRef.current.find((item) => item.id === note.id);
     // Equal-or-older remote must not replace local list/body (issue #51).
@@ -266,6 +326,9 @@ export function AgentNoteApp({
     );
 
     if (activeIdRef.current !== note.id) return;
+    // CRDT-backed body is owned by the Y.Doc — the list row may advance, the
+    // editor buffer never adopts a whole-document remote body.
+    if (CRDT_ENABLED) return;
 
     const nextBody = substituteAsciiArrows(note.body).text;
     // Body-neutral generation bump (publish / unpublish / restore rewrite only
@@ -312,6 +375,8 @@ export function AgentNoteApp({
   const applyRemoteDraft = useCallback(
     (payload: Extract<SyncMessage, { type: "draft" }>) => {
       if (payload.sourceId === tabId.current) return;
+      // CRDT tabs exchange binary `doc-update` messages instead.
+      if (CRDT_ENABLED) return;
 
       const peerKey = `${payload.sourceId}:${payload.id}`;
       const prevSeq = lastDraftSeqByPeer.current.get(peerKey);
@@ -377,7 +442,7 @@ export function AgentNoteApp({
         sourceId: tabId.current,
         id,
         body: nextBody,
-        title: deriveTitle(nextBody),
+        title: deriveNoteTitle(nextBody),
         at: Date.now(),
         baseUpdatedAt: existing?.updated_at,
         draftSeq: draftSeqRef.current,
@@ -518,7 +583,7 @@ export function AgentNoteApp({
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              title: deriveTitle(nextBody),
+              title: deriveNoteTitle(nextBody),
               body: nextBody,
               expected_updated_at: expectedUpdatedAt,
             }),
@@ -547,7 +612,7 @@ export function AgentNoteApp({
               const kept = noteAfterConflictKeepLocalBuffer(
                 conflictNote,
                 bodyRefState.current,
-                deriveTitle(bodyRefState.current),
+                deriveNoteTitle(bodyRefState.current),
               ) as Note;
               // Rebase the base generation too, so an explicit Retry can win.
               // Deliberate: only a user action re-sends this buffer.
@@ -643,13 +708,21 @@ export function AgentNoteApp({
   }, [persist]);
 
   const retrySaveNow = useCallback(() => {
+    if (CRDT_ENABLED) {
+      void docFlush();
+      return;
+    }
     const id = activeIdRef.current;
     if (!id) return;
     clearSaveRetry();
     void persist(id, bodyRefState.current);
-  }, [clearSaveRetry, persist]);
+  }, [clearSaveRetry, docFlush, persist]);
 
   const flushPendingSave = useCallback(async () => {
+    if (CRDT_ENABLED) {
+      await docFlush();
+      return true;
+    }
     const id = activeIdRef.current;
     if (!id) return true;
     if (!hasUnsavedWork(saveStateRef.current)) return true;
@@ -673,13 +746,19 @@ export function AgentNoteApp({
     }
     clearSaveRetry();
     return persist(id, bodyRefState.current);
-  }, [clearSaveRetry, persist]);
+  }, [clearSaveRetry, docFlush, persist]);
 
   /**
    * Leaving the active note must not discard a dirty/saving/error buffer.
    * Mirror Reload-to-Update: flush first; confirm only if flush fails.
    */
   const ensureSafeToLeaveActive = useCallback(async () => {
+    if (CRDT_ENABLED) {
+      // Queued updates go out before the doc is torn down; a CRDT never has to
+      // ask the user to discard anything.
+      await docFlush().catch(() => {});
+      return true;
+    }
     if (!hasUnsavedWork(saveStateRef.current)) return true;
     let flushed = false;
     try {
@@ -691,7 +770,7 @@ export function AgentNoteApp({
     return window.confirm(
       "You have unsaved changes. Discard them and continue?",
     );
-  }, [flushPendingSave]);
+  }, [docFlush, flushPendingSave]);
 
   const clearActiveNote = useCallback(
     async (opts?: { skipFlush?: boolean }) => {
@@ -721,6 +800,8 @@ export function AgentNoteApp({
 
   useEffect(() => {
     if (!activeId) return;
+    // CRDT path persists through the doc sync loop, not a whole-document PUT.
+    if (CRDT_ENABLED) return;
     if (skipNextSave.current) {
       skipNextSave.current = false;
       return;
@@ -749,6 +830,9 @@ export function AgentNoteApp({
   ]);
 
   useEffect(() => {
+    // CRDT edits merge server-side and queued updates flush on `pagehide`, so
+    // the body never needs a discard prompt.
+    if (CRDT_ENABLED) return;
     if (!hasUnsavedWork(saveState)) return;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
@@ -1048,7 +1132,7 @@ export function AgentNoteApp({
   }
 
   const tabTitle = activeId
-    ? previewTitle({ title: deriveTitle(body), body })
+    ? previewTitle({ title: deriveNoteTitle(displayBody), body: displayBody })
     : "agentnote";
 
   // Browser tab: page title only (Notion-style). Shell stays "agentnote".
@@ -1115,26 +1199,26 @@ export function AgentNoteApp({
         >
           {activeNote?.is_public ? "Published" : "Publish"}
         </button>
-        {saveState === "error" ? (
+        {displaySaveState === "error" ? (
           <div
             className="zed-save-error"
             role="alert"
             title={
-              saveErrorKind === "auth"
+              displaySaveErrorKind === "auth"
                 ? "Session expired — sign in again to save"
-                : saveErrorKind === "conflict"
+                : displaySaveErrorKind === "conflict"
                   ? "Another tab saved this note — Retry overwrites with your version"
                   : "Latest changes are not saved"
             }
           >
             <span>
-              {saveErrorKind === "auth"
+              {displaySaveErrorKind === "auth"
                 ? "Sign in to save"
-                : saveErrorKind === "conflict"
+                : displaySaveErrorKind === "conflict"
                   ? "Conflict"
                   : "Not saved"}
             </span>
-            {saveErrorKind === "auth" ? (
+            {displaySaveErrorKind === "auth" ? (
               <a className="zed-save-error__action" href="/login">
                 Sign in
               </a>
@@ -1150,7 +1234,7 @@ export function AgentNoteApp({
           </div>
         ) : null}
         <ReloadToUpdate
-          hasUnsavedWork={hasUnsavedWork(saveState)}
+          hasUnsavedWork={hasUnsavedWork(displaySaveState)}
           onFlushSave={flushPendingSave}
         />
         <AccountMenu onOpenSettings={() => setSettingsOpen(true)} />
@@ -1185,13 +1269,17 @@ export function AgentNoteApp({
                 const active = note.id === activeId;
                 const label =
                   note.id === activeId
-                    ? previewTitle({ title: deriveTitle(body), body })
+                    ? previewTitle({
+                        title: deriveNoteTitle(displayBody),
+                        body: displayBody,
+                      })
                     : previewTitle(note);
                 const updatedLabel =
-                  note.id === activeId && saveState === "error"
+                  note.id === activeId && displaySaveState === "error"
                     ? "Not saved"
                     : note.id === activeId &&
-                        (saveState === "dirty" || saveState === "saving")
+                        (displaySaveState === "dirty" ||
+                          displaySaveState === "saving")
                       ? "Just now"
                       : formatUpdatedAt(note.updated_at);
                 return (
@@ -1285,14 +1373,35 @@ export function AgentNoteApp({
           {activeId ? (
             <div className="zed-editor">
               <div className="zed-buffer zed-buffer--cm">
-                <CodeMirrorEditor
-                  key={activeId}
-                  value={body}
-                  wrap={wrap}
-                  onChange={setBodyNow}
-                  onExternalReconcile={reconcileBodyFromEditor}
-                  autoFocus
-                />
+                {CRDT_ENABLED ? (
+                  docSession.ytext ? (
+                    <CodeMirrorEditor
+                      key={`${activeId}:crdt`}
+                      ytext={docSession.ytext}
+                      awareness={docSession.awareness}
+                      wrap={wrap}
+                      autoFocus
+                    />
+                  ) : (
+                    // Never edit before the server state lands: a locally seeded
+                    // doc merges into duplicated content.
+                    <CodeMirrorEditor
+                      key={`${activeId}:loading`}
+                      value={body}
+                      wrap={wrap}
+                      readOnly
+                    />
+                  )
+                ) : (
+                  <CodeMirrorEditor
+                    key={activeId}
+                    value={body}
+                    wrap={wrap}
+                    onChange={setBodyNow}
+                    onExternalReconcile={reconcileBodyFromEditor}
+                    autoFocus
+                  />
+                )}
               </div>
             </div>
           ) : (
