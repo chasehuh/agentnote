@@ -210,6 +210,34 @@ export async function ensureSchema() {
         ON note_revisions (created_at);
       `);
 
+      // CRDT note body (see lib/crdt/*). Append-only Yjs update log: rows are
+      // never UPDATEd, only INSERTed and dropped once folded into a snapshot.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS note_doc_updates (
+          seq BIGSERIAL PRIMARY KEY,
+          note_id TEXT NOT NULL REFERENCES notes(id) ON UPDATE CASCADE ON DELETE CASCADE,
+          user_id TEXT NOT NULL,
+          update_bin BYTEA NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS note_doc_updates_note_seq_idx
+        ON note_doc_updates (note_id, seq);
+      `);
+      // Compacted state, one row per CRDT-backed note. Its presence is also the
+      // marker that the note's body is CRDT-managed (legacy PUT must 409).
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS note_doc_snapshots (
+          note_id TEXT PRIMARY KEY REFERENCES notes(id) ON UPDATE CASCADE ON DELETE CASCADE,
+          user_id TEXT NOT NULL,
+          state_bin BYTEA NOT NULL,
+          state_vector BYTEA NOT NULL,
+          through_seq BIGINT NOT NULL DEFAULT 0,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
       await migrateLegacyNoteIds(pool);
     })();
   }

@@ -115,8 +115,9 @@ export function shouldRecordBodyRevision(
 /**
  * Best-effort insert of the body about to be replaced.
  * Coalesces bursts; never throws to the caller.
+ * Also used by the CRDT projection write (see lib/crdt/note-doc-store.ts).
  */
-async function recordPreviousBodyRevision(input: {
+export async function recordPreviousBodyRevision(input: {
   noteId: string;
   userId: string;
   title: string;
