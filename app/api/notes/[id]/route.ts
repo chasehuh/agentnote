@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isCrdtManagedNote } from "@/lib/crdt/note-doc-store";
 import { isValidNoteId } from "@/lib/note-id";
 import {
   archiveNote,
@@ -54,6 +55,22 @@ export async function PUT(request: Request, { params }: Params) {
       return NextResponse.json(
         { error: "expected_updated_at is required" },
         { status: 400 },
+      );
+    }
+
+    // A CRDT-backed body is owned by the Yjs doc. A whole-document PUT would
+    // LWW-clobber the projection, so refuse it with a machine-readable reason.
+    if (
+      typeof payload.body === "string" &&
+      (await isCrdtManagedNote(authResult.userId, id))
+    ) {
+      const note = await getNote(authResult.userId, id);
+      if (!note) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      return NextResponse.json(
+        { error: "Conflict", reason: "crdt_managed_body", note },
+        { status: 409 },
       );
     }
 

@@ -10,6 +10,7 @@ Live: [memo.chasehuh.com](https://memo.chasehuh.com)
 - Clerk (`agentnote` app) with **GitHub OAuth** sign-in
 - CodeMirror 6 note editor (Zed-like chrome, soft wrap, Tab→spaces, Tab indents Markdown list markers; ⌘⌫ deletes to hard line start, ⇧⌘K deletes the line)
 - Postgres (`pg`) — notes scoped by Clerk `user_id`
+- Optional Yjs CRDT note body (`NEXT_PUBLIC_AGENTNOTE_CRDT`, see below)
 - Vercel
 
 ## Setup
@@ -114,6 +115,41 @@ WHERE n.id = r.note_id
   AND r.id = $revision_id
 RETURNING n.id, length(n.body) AS body_len, n.updated_at;
 ```
+
+### CRDT note body (`NEXT_PUBLIC_AGENTNOTE_CRDT`)
+
+Behind `NEXT_PUBLIC_AGENTNOTE_CRDT=1` the note body is a **Yjs `Y.Text`** bound to CodeMirror 6 via `y-codemirror.next`, instead of a whole-document `PUT`. Concurrent edits from any number of tabs or devices merge deterministically, so there is no 409, no discard prompt, and no silent truncation for the body.
+
+`notes.body` stays exactly what it was — a plaintext column — but it is now a **server-derived projection** of the CRDT. Publish/`/p/…`, `note_revisions`, derived titles, archive, and the sidebar preview are unchanged.
+
+Tables (created idempotently by `ensureSchema()`, both `ON DELETE CASCADE` from `notes`):
+
+| Table | Contents |
+| --- | --- |
+| `note_doc_updates` | Append-only Yjs update log (`seq`, `update_bin`). Never updated in place. |
+| `note_doc_snapshots` | One compacted state per CRDT-backed note (`state_bin`, `state_vector`, `through_seq`). Its presence also marks the note as CRDT-managed. |
+
+Endpoints (both Clerk-authenticated, both resolve the id **through `user_id`**):
+
+- `GET /api/notes/:id/doc` — full state; seeds from `notes.body` exactly once per note. Seeding is **server-only** and guarded by `INSERT … ON CONFLICT DO NOTHING` + re-read; seeding twice would duplicate the body on merge.
+- `POST /api/notes/:id/doc/sync` — push + pull in one round trip (`{ update, state_vector, since }` in, `{ seq, update, body, updated_at }` out). Appends the update, re-projects `notes.body` under a per-note advisory lock, and returns the diff the caller is missing. Payloads over **1 MiB** decoded are rejected with `413`; an update the server cannot apply is `400` and is **not** appended.
+
+Transport in this phase is the existing HTTP + 1.5 s visible-tab poll, plus a `doc-update` BroadcastChannel message that converges peer tabs in about one frame. No new infrastructure.
+
+Operational notes:
+
+- **The flag is effectively one-way per note.** Once a note has been opened with the flag on, a snapshot row exists and legacy whole-document `PUT`s for it are refused with `409 { "reason": "crdt_managed_body" }`. Turning the flag back off leaves those notes readable and publishable but not body-editable. To un-seed a note, write its projected body back and drop its doc rows:
+
+  ```sql
+  DELETE FROM note_doc_updates  WHERE note_id = $1;
+  DELETE FROM note_doc_snapshots WHERE note_id = $1;
+  ```
+
+  (`notes.body` already holds the current text, so nothing is lost.)
+- **Undo/redo moves to `Y.UndoManager`** on CRDT-backed notes — CodeMirror's `history()` is dropped there so ⌘Z does not double-apply. Undo is per-client by design: you undo your own edits, not a peer's.
+- **IME safety.** `y-codemirror.next` dispatches remote deltas into CodeMirror with no `view.composing` guard, so inbound updates are held back while an IME composition is active and replayed on `compositionend`. That is lossless: Yjs updates are commutative and idempotent.
+- **The update log grows monotonically.** Compaction (fold the tail into the snapshot, then delete folded rows) is a follow-up; until it ships, a heavily edited note accumulates rows.
+- **Recovery** is unchanged: `note_revisions` still records the prior body on every projection write, coalesced at 60 s. The CRDT log itself is a second, finer-grained trail — replaying `note_doc_updates` in `seq` order reconstructs any past state.
 
 ### Railway Postgres backups (ops)
 
