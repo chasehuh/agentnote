@@ -15,6 +15,21 @@ export const MAX_DOC_UPDATE_BYTES = 1024 * 1024;
 export const MAX_DOC_UPDATE_BASE64_CHARS =
   Math.ceil(MAX_DOC_UPDATE_BYTES / 3) * 4 + 4;
 
+/** Tail length that triggers compaction — mirrors y-postgresql's default. */
+export const COMPACT_UPDATE_COUNT = 200;
+/** Tail size that triggers compaction, so one runaway note cannot grow unbounded. */
+export const COMPACT_BYTES = 256 * 1024;
+
+/** Whether a note's update tail should be folded back into its snapshot. */
+export function shouldCompact(input: {
+  updateCount: number;
+  byteSize: number;
+}): boolean {
+  return (
+    input.updateCount > COMPACT_UPDATE_COUNT || input.byteSize > COMPACT_BYTES
+  );
+}
+
 export function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunk = 0x8000;
