@@ -4,7 +4,12 @@ import { ensureSchema, getPool, query } from "../db";
 import { normalizeNoteId } from "../note-id";
 import { deriveNoteTitle } from "../note-title";
 import { recordPreviousBodyRevision } from "../notes";
-import { NOTE_TEXT_KEY, encodeMissingUpdate } from "./note-doc";
+import {
+  COMPACT_BYTES,
+  COMPACT_UPDATE_COUNT,
+  NOTE_TEXT_KEY,
+  encodeMissingUpdate,
+} from "./note-doc";
 
 /**
  * Postgres I/O for the note body CRDT: snapshot + append-only update log, plus
@@ -378,4 +383,121 @@ export async function isCrdtManagedNote(
     [userId, candidates],
   );
   return result.rows.length > 0;
+}
+
+export type NoteDocCompactionCandidate = {
+  noteId: string;
+  updateCount: number;
+  byteSize: number;
+};
+
+export type NoteDocCompactionResult = {
+  noteId: string;
+  throughSeq: number;
+  removedUpdates: number;
+  bytesBefore: number;
+  bytesAfter: number;
+};
+
+/** Notes whose update tail has grown past either compaction threshold. */
+export async function listNoteDocCompactionCandidates(
+  limit: number,
+): Promise<NoteDocCompactionCandidate[]> {
+  const result = await query<{
+    note_id: string;
+    update_count: string;
+    byte_size: string;
+  }>(
+    `SELECT note_id,
+            COUNT(*) AS update_count,
+            COALESCE(SUM(octet_length(update_bin)), 0) AS byte_size
+     FROM note_doc_updates
+     GROUP BY note_id
+     HAVING COUNT(*) > $1
+        OR COALESCE(SUM(octet_length(update_bin)), 0) > $2
+     ORDER BY COUNT(*) DESC
+     LIMIT $3`,
+    [COMPACT_UPDATE_COUNT, COMPACT_BYTES, limit],
+  );
+  return result.rows.map((row) => ({
+    noteId: row.note_id,
+    updateCount: Number(row.update_count),
+    byteSize: Number(row.byte_size),
+  }));
+}
+
+/**
+ * Fold a note's update tail back into its snapshot and drop the folded rows.
+ *
+ * Deliberately a **full `Y.Doc` load and re-encode**, not `Y.mergeUpdates`:
+ * merging alone dedupes and recompresses but does not garbage-collect deleted
+ * content, so a heavily edited note would never actually shrink.
+ *
+ * Returns `null` when there is nothing to do (no snapshot, or an empty tail).
+ */
+export async function compactNoteDoc(
+  noteId: string,
+): Promise<NoteDocCompactionResult | null> {
+  return withNoteDocLock(noteId, async (client) => {
+    const snapshot = await client.query<{
+      state_bin: Buffer;
+      through_seq: string;
+    }>(
+      `SELECT state_bin, through_seq
+       FROM note_doc_snapshots
+       WHERE note_id = $1`,
+      [noteId],
+    );
+    const row = snapshot.rows[0];
+    if (!row) return null;
+
+    const previousThroughSeq = Number(row.through_seq);
+    const tail = await client.query<{ seq: string; update_bin: Buffer }>(
+      `SELECT seq, update_bin
+       FROM note_doc_updates
+       WHERE note_id = $1 AND seq > $2
+       ORDER BY seq`,
+      [noteId, previousThroughSeq],
+    );
+    if (tail.rows.length === 0) return null;
+
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, new Uint8Array(row.state_bin));
+    let throughSeq = previousThroughSeq;
+    let tailBytes = 0;
+    for (const update of tail.rows) {
+      Y.applyUpdate(doc, new Uint8Array(update.update_bin));
+      throughSeq = Number(update.seq);
+      tailBytes += update.update_bin.length;
+    }
+    const state = Buffer.from(Y.encodeStateAsUpdate(doc));
+    const stateVector = Buffer.from(Y.encodeStateVector(doc));
+    doc.destroy();
+
+    // `through_seq <= $4` keeps the cursor monotonic even if two compactions
+    // somehow overlap: an older run can never rewind a newer snapshot.
+    const updated = await client.query(
+      `UPDATE note_doc_snapshots
+       SET state_bin = $2,
+           state_vector = $3,
+           through_seq = $4,
+           updated_at = NOW()
+       WHERE note_id = $1 AND through_seq <= $4`,
+      [noteId, state, stateVector, throughSeq],
+    );
+    if ((updated.rowCount ?? 0) === 0) return null;
+
+    const deleted = await client.query(
+      `DELETE FROM note_doc_updates WHERE note_id = $1 AND seq <= $2`,
+      [noteId, throughSeq],
+    );
+
+    return {
+      noteId,
+      throughSeq,
+      removedUpdates: deleted.rowCount ?? 0,
+      bytesBefore: row.state_bin.length + tailBytes,
+      bytesAfter: state.length,
+    };
+  });
 }

@@ -148,7 +148,7 @@ Operational notes:
   (`notes.body` already holds the current text, so nothing is lost.)
 - **Undo/redo moves to `Y.UndoManager`** on CRDT-backed notes — CodeMirror's `history()` is dropped there so ⌘Z does not double-apply. Undo is per-client by design: you undo your own edits, not a peer's.
 - **IME safety.** `y-codemirror.next` dispatches remote deltas into CodeMirror with no `view.composing` guard, so inbound updates are held back while an IME composition is active and replayed on `compositionend`. That is lossless: Yjs updates are commutative and idempotent.
-- **The update log grows monotonically.** Compaction (fold the tail into the snapshot, then delete folded rows) is a follow-up; until it ships, a heavily edited note accumulates rows.
+- **Compaction.** The update log is append-only, so nightly cron `GET /api/cron/compact-note-docs` (Bearer `CRON_SECRET`) folds each note's tail back into its snapshot and deletes the folded rows. A note qualifies past **200 updates** or **256 KiB** of tail (the size guard stops one runaway note growing unbounded); at most **100 notes** are compacted per run and the response reports `truncated` when more were waiting. Compaction is a full `Y.Doc` load and re-encode, not `Y.mergeUpdates` — merging alone does not garbage-collect deleted content, so a heavily edited note would never actually shrink. `through_seq` only ever moves forward.
 - **Recovery** is unchanged: `note_revisions` still records the prior body on every projection write, coalesced at 60 s. The CRDT log itself is a second, finer-grained trail — replaying `note_doc_updates` in `seq` order reconstructs any past state.
 
 ### Railway Postgres backups (ops)

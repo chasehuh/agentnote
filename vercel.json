@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/purge-note-revisions",
       "schedule": "15 9 * * *"
+    },
+    {
+      "path": "/api/cron/compact-note-docs",
+      "schedule": "30 9 * * *"
     }
   ]
 }
