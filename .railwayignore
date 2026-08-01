@@ -1,0 +1,5 @@
+node_modules
+.next
+.git
+services/*/node_modules
+services/*/dist

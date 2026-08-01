@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  // Only the entrypoints — TypeScript follows imports into ../../lib itself,
+  // so the browser-only modules next to them stay out of this program.
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

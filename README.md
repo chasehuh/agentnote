@@ -10,7 +10,7 @@ Live: [memo.chasehuh.com](https://memo.chasehuh.com)
 - Clerk (`agentnote` app) with **GitHub OAuth** sign-in
 - CodeMirror 6 note editor (Zed-like chrome, soft wrap, Tab→spaces, Tab indents Markdown list markers; ⌘⌫ deletes to hard line start, ⇧⌘K deletes the line)
 - Postgres (`pg`) — notes scoped by Clerk `user_id`
-- Optional Yjs CRDT note body (`NEXT_PUBLIC_AGENTNOTE_CRDT`, see below)
+- Optional Yjs CRDT note body (`NEXT_PUBLIC_AGENTNOTE_CRDT`, see below), with an optional Hocuspocus realtime server on Railway (`services/collab`)
 - Vercel
 
 ## Setup
@@ -134,7 +134,7 @@ Endpoints (both Clerk-authenticated, both resolve the id **through `user_id`**):
 - `GET /api/notes/:id/doc` — full state; seeds from `notes.body` exactly once per note. Seeding is **server-only** and guarded by `INSERT … ON CONFLICT DO NOTHING` + re-read; seeding twice would duplicate the body on merge.
 - `POST /api/notes/:id/doc/sync` — push + pull in one round trip (`{ update, state_vector, since }` in, `{ seq, update, body, updated_at }` out). Appends the update, re-projects `notes.body` under a per-note advisory lock, and returns the diff the caller is missing. Payloads over **1 MiB** decoded are rejected with `413`; an update the server cannot apply is `400` and is **not** appended.
 
-Transport in this phase is the existing HTTP + 1.5 s visible-tab poll, plus a `doc-update` BroadcastChannel message that converges peer tabs in about one frame. No new infrastructure.
+Two transports sit behind the same document model, chosen by `NEXT_PUBLIC_AGENTNOTE_COLLAB_URL` (see below). Unset: HTTP + a 1.5 s visible-tab poll, no extra infrastructure. Set: a Hocuspocus WebSocket. Either way a `doc-update` BroadcastChannel message converges peer tabs in about one frame.
 
 **Local-first.** Each open note is mirrored into IndexedDB under `agentnote.note.{userId}.{noteId}` (`y-indexeddb`), so a reload or a dropped connection loses nothing. On load the client applies the server state and then pushes back anything the server has never seen — offline edits are reconciled, not just overwritten. Reconnecting (`online`, tab focus, or the next poll) flushes whatever queued. While the server is unreachable the editor stays fully usable and the header reads **Offline — saved on this device**.
 
@@ -153,6 +153,40 @@ Operational notes:
 - **IME safety.** `y-codemirror.next` dispatches remote deltas into CodeMirror with no `view.composing` guard, so inbound updates are held back while an IME composition is active and replayed on `compositionend`. That is lossless: Yjs updates are commutative and idempotent.
 - **Compaction.** The update log is append-only, so nightly cron `GET /api/cron/compact-note-docs` (Bearer `CRON_SECRET`) folds each note's tail back into its snapshot and deletes the folded rows. A note qualifies past **200 updates** or **256 KiB** of tail (the size guard stops one runaway note growing unbounded); at most **100 notes** are compacted per run and the response reports `truncated` when more were waiting. Compaction is a full `Y.Doc` load and re-encode, not `Y.mergeUpdates` — merging alone does not garbage-collect deleted content, so a heavily edited note would never actually shrink. `through_seq` only ever moves forward.
 - **Recovery** is unchanged: `note_revisions` still records the prior body on every projection write, coalesced at 60 s. The CRDT log itself is a second, finer-grained trail — replaying `note_doc_updates` in `seq` order reconstructs any past state.
+
+### Realtime transport (`NEXT_PUBLIC_AGENTNOTE_COLLAB_URL`)
+
+Setting `NEXT_PUBLIC_AGENTNOTE_COLLAB_URL` swaps the poll for a WebSocket and drops cross-device latency from ~1.5 s to well under 100 ms. Leaving it unset keeps the HTTP transport exactly as it was, so rolling realtime back is one variable — the document model, schema, and editor binding are identical either way.
+
+Production: `wss://agentnote-collab-production.up.railway.app`
+
+**The server** lives in `services/collab` (`@agentnote/collab`) — a Hocuspocus process deployed as a second service in the same Railway project as the Postgres, so it reaches the database over the private network. One room per note, keyed by the note's **canonical** id.
+
+| Env | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Railway reference to the Postgres service. |
+| `CLERK_SECRET_KEY` | Verifies session tokens. Must match the Clerk instance the app runs against — a production server cannot verify development tokens. |
+| `AGENTNOTE_ALLOWED_ORIGINS` | Optional comma-separated origin allowlist. Unset means any origin, which is still gated by the token and ownership checks. |
+| `PORT` | Injected by Railway. |
+
+`onAuthenticate` verifies the Clerk JWT **and** re-checks ownership for that specific `documentName`, so a valid token for user A cannot open user B's room. It also refuses an alias, because two room keys for one note would mean two in-memory documents reconciling only through Postgres. `GET /health` is the Railway health check.
+
+Persistence reuses the same helpers the HTTP transport writes to, so there is exactly one document history. `fetch` returns snapshot + tail (seeding from `notes.body` once); `store` — debounced to at most every 2 s, at least every 10 s — **merges** the room state with whatever the log holds rather than replacing it, snapshots the result, drops the folded tail, and re-projects `notes.body`. An HTTP client appending while a room is live therefore cannot be clobbered.
+
+**The client** gives the provider its own `Y.Doc` and bridges it to the editor's, rather than handing the editor document straight to Hocuspocus. That is what keeps the IME gate in the path: the provider applies updates the moment they arrive, and `y-codemirror.next` would dispatch them into CodeMirror mid-composition. Mirroring both ways is safe for the usual reason — Yjs updates are commutative and idempotent.
+
+Local development:
+
+```bash
+pnpm collab:dev                                   # ws://localhost:1234
+NEXT_PUBLIC_AGENTNOTE_COLLAB_URL=ws://localhost:1234 pnpm dev
+```
+
+Operational notes:
+
+- **Preview deployments are blocked by the allowlist.** Production is pinned to `https://memo.chasehuh.com`. To exercise realtime from a Vercel preview, add that origin to `AGENTNOTE_ALLOWED_ORIGINS` or clear the variable.
+- **Remote cursors stay off.** The editor keeps its own awareness and the provider runs with `awareness: null`; wiring presence across the bridge is Phase 3 work.
+- **A note's sidebar row** refreshes from the existing notes-list poll on this path — the realtime server writes `notes.body` on its own debounce rather than answering each edit.
 
 ### Railway Postgres backups (ops)
 

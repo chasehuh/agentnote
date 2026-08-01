@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Note } from "@/lib/types";
 import { substituteAsciiArrows } from "@/lib/arrows";
@@ -69,6 +70,12 @@ const DRAFT_BROADCAST_MS = 32;
  * already seeded server-side stays CRDT-managed (see README).
  */
 const CRDT_ENABLED = process.env.NEXT_PUBLIC_AGENTNOTE_CRDT === "1";
+/**
+ * Realtime (Hocuspocus) server for the CRDT path. Unset keeps the HTTP + poll
+ * transport, so rolling realtime back is one variable.
+ */
+const COLLAB_URL =
+  process.env.NEXT_PUBLIC_AGENTNOTE_COLLAB_URL?.trim() || null;
 /** Phone-width only — keep tablet/desktop browser windows on the desktop layout. */
 const NARROW_QUERY = "(max-width: 480px)";
 
@@ -176,6 +183,9 @@ export function AgentNoteApp({
   /** When set (deep link `/n/{id}`), open that note; otherwise first note / empty. */
   initialSelectedId?: string;
 }) {
+  // Realtime handshake token. Clerk rotates it, so the provider re-reads it on
+  // every (re)connect rather than holding one.
+  const { getToken } = useAuth();
   const [notes, setNotes] = useState(() => sortNotesByRecent(initialNotes));
   const [archivedNotes, setArchivedNotes] = useState<Note[]>([]);
   const [archivedOpen, setArchivedOpen] = useState(false);
@@ -290,6 +300,8 @@ export function AgentNoteApp({
     noteId: CRDT_ENABLED ? activeId : null,
     userId,
     enabled: CRDT_ENABLED,
+    collabUrl: COLLAB_URL,
+    getToken,
     onProjection: applyDocProjection,
   });
   const docFlush = docSession.flush;

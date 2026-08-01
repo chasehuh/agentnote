@@ -1,0 +1,26 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "pnpm install --frozen-lockfile && pnpm --filter @agentnote/collab build",
+    "watchPatterns": [
+      "services/collab/**",
+      "lib/crdt/**",
+      "lib/db.ts",
+      "lib/note-id.ts",
+      "lib/note-title.ts",
+      "lib/notes.ts",
+      "lib/types.ts",
+      "package.json",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml"
+    ]
+  },
+  "deploy": {
+    "startCommand": "node services/collab/dist/index.mjs",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 60,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}

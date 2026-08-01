@@ -501,3 +501,125 @@ export async function compactNoteDoc(
     };
   });
 }
+
+export type NoteDocPersistResult = {
+  /** Log cursor folded into the snapshot by this write. */
+  throughSeq: number;
+  body: string;
+  updatedAt: string;
+};
+
+/**
+ * Persist a full document state produced by the realtime server.
+ *
+ * The incoming state is **merged** with whatever the log already holds rather
+ * than replacing it, so an HTTP client that appended while the room was live
+ * cannot be clobbered. The merged result becomes the snapshot, the folded tail
+ * is dropped, and `notes.body` is re-projected.
+ *
+ * Returns `null` when the note does not exist or does not belong to `userId`.
+ */
+export async function persistNoteDocState(input: {
+  userId: string;
+  noteId: string;
+  state: Uint8Array;
+}): Promise<NoteDocPersistResult | null> {
+  const { noteId, userId } = input;
+
+  const result = await withNoteDocLock(noteId, async (client) => {
+    const loaded = await loadOrSeedNoteDoc(client, noteId, userId);
+    if (!loaded) return null;
+
+    const { doc } = loaded;
+    try {
+      Y.applyUpdate(doc, input.state);
+    } catch {
+      doc.destroy();
+      return null;
+    }
+
+    const throughSeq = loaded.seq;
+    const state = Buffer.from(Y.encodeStateAsUpdate(doc));
+    const stateVector = Buffer.from(Y.encodeStateVector(doc));
+    const body = doc.getText(NOTE_TEXT_KEY).toString();
+    doc.destroy();
+
+    // `through_seq <= $4` keeps the cursor monotonic: a slow writer can never
+    // rewind a snapshot a later one already advanced.
+    const updated = await client.query(
+      `UPDATE note_doc_snapshots
+       SET state_bin = $2,
+           state_vector = $3,
+           through_seq = $4,
+           updated_at = NOW()
+       WHERE note_id = $1 AND through_seq <= $4`,
+      [noteId, state, stateVector, throughSeq],
+    );
+    if ((updated.rowCount ?? 0) === 0) return null;
+
+    await client.query(
+      `DELETE FROM note_doc_updates WHERE note_id = $1 AND seq <= $2`,
+      [noteId, throughSeq],
+    );
+
+    const projection = await projectNoteBody(client, { noteId, userId, body });
+    if (!projection) return null;
+
+    return {
+      throughSeq,
+      body,
+      updatedAt: projection.updatedAt,
+      prevTitle: projection.prevTitle,
+      prevBody: projection.prevBody,
+    };
+  });
+
+  if (result && result.prevBody != null) {
+    await recordPreviousBodyRevision({
+      noteId,
+      userId,
+      title: result.prevTitle ?? "",
+      body: result.prevBody,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Resolve a note id to its canonical primary key for a given user, or `null`
+ * when the user does not own it. The realtime room key goes through this so a
+ * leaked id cannot open another user's document.
+ */
+export async function resolveOwnedNoteId(
+  userId: string,
+  rawId: string,
+): Promise<string | null> {
+  const normalized = normalizeNoteId(rawId);
+  if (!normalized) return null;
+  const candidates = Array.from(new Set([normalized, rawId]));
+
+  const result = await query<{ id: string }>(
+    `SELECT n.id
+     FROM notes n
+     LEFT JOIN note_aliases a ON a.note_id = n.id
+     WHERE n.user_id = $1
+       AND n.deleted_at IS NULL
+       AND (n.id = ANY($2::text[]) OR a.alias = ANY($2::text[]))
+     LIMIT 1`,
+    [userId, candidates],
+  );
+  return result.rows[0]?.id ?? null;
+}
+
+/**
+ * Owner of a note, for writers that already proved access another way (the
+ * realtime room key is authorized once, at connect time).
+ */
+export async function readNoteOwnerId(noteId: string): Promise<string | null> {
+  const result = await query<{ user_id: string }>(
+    `SELECT user_id FROM notes WHERE id = $1`,
+    [noteId],
+  );
+  return result.rows[0]?.user_id ?? null;
+}

@@ -5,21 +5,21 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { createTabId, openSyncChannel } from "../tab-sync";
 import { createCompositionGate } from "./composition-gate";
+import { createHttpTransport } from "./http-transport";
 import { openLocalNoteDoc } from "./local-persistence";
-import { NOTE_TEXT_KEY, encodeMissingUpdate } from "./note-doc";
-import { fetchNoteDocState, pushNoteDocSync } from "./sync-transport";
+import { NOTE_TEXT_KEY } from "./note-doc";
+import {
+  BROADCAST_ORIGIN,
+  NETWORK_ORIGIN,
+  REMOTE_ORIGIN,
+  type NoteDocProjection,
+  type NoteDocStatus,
+  type NoteDocTransport,
+  type NoteDocTransportContext,
+} from "./transport";
+import { createWebsocketTransport } from "./websocket-transport";
 
-/** Batch local edits before one POST — mirrors the legacy autosave feel. */
-const PUSH_DEBOUNCE_MS = 400;
-/** Pull cadence while the tab is visible — mirrors the notes-list poll. */
-const DOC_POLL_MS = 1500;
-
-/** Update came from the server; never echo it back. */
-const REMOTE_ORIGIN = "remote";
-/** Update came from a peer tab, which owns pushing it to the server. */
-const BROADCAST_ORIGIN = "broadcast";
-
-export type NoteDocStatus = "loading" | "synced" | "syncing" | "offline";
+export type { NoteDocProjection, NoteDocStatus };
 
 export type NoteDocSession = {
   /** `null` until server state has landed — do not mount an editor before then. */
@@ -32,12 +32,6 @@ export type NoteDocSession = {
   flush: () => Promise<void>;
 };
 
-export type NoteDocProjection = {
-  noteId: string;
-  body: string;
-  updatedAt: string;
-};
-
 type DocState = {
   noteId: string;
   ytext: Y.Text | null;
@@ -47,8 +41,8 @@ type DocState = {
 };
 
 /**
- * Owns one `Y.Doc` per active note: loads server state, binds the update log to
- * HTTP sync, and mirrors local updates to peer tabs over BroadcastChannel.
+ * Owns one `Y.Doc` per active note: the IndexedDB copy, the IME gate, peer-tab
+ * mirroring, and whichever transport carries it to the server.
  *
  * The doc is never seeded from client-side plaintext — seeding is server-only
  * and exactly once per note, or the body duplicates on merge.
@@ -57,14 +51,20 @@ export function useNoteDoc(options: {
   noteId: string | null;
   userId: string;
   enabled: boolean;
+  /** Realtime server URL. Unset falls back to HTTP + poll. */
+  collabUrl?: string | null;
+  /** Clerk session token for the realtime handshake. */
+  getToken?: () => Promise<string | null>;
   onProjection?: (projection: NoteDocProjection) => void;
 }): NoteDocSession {
-  const { enabled, noteId, userId } = options;
+  const { collabUrl, enabled, noteId, userId } = options;
 
-  // Latest-callback ref so a changing `onProjection` never re-creates the doc.
+  // Latest-callback refs so changing callbacks never re-create the doc.
   const onProjectionRef = useRef(options.onProjection);
+  const getTokenRef = useRef(options.getToken);
   useEffect(() => {
     onProjectionRef.current = options.onProjection;
+    getTokenRef.current = options.getToken;
   });
 
   const [tabId] = useState(createTabId);
@@ -86,12 +86,7 @@ export function useNoteDoc(options: {
     const persistence = openLocalNoteDoc(userId, noteId, doc);
 
     let disposed = false;
-    /** Server head this client has folded in; `null` until the first load. */
-    let seq: number | null = null;
-    let pending: Uint8Array[] = [];
-    let pushTimer: ReturnType<typeof setTimeout> | null = null;
-    let syncing: Promise<void> | null = null;
-    let loading: Promise<void> | null = null;
+    const isDisposed = () => disposed;
 
     const setStatus = (status: NoteDocStatus) => {
       if (disposed) return;
@@ -100,6 +95,17 @@ export function useNoteDoc(options: {
           return prev.status === status ? prev : { ...prev, status };
         }
         return { noteId, ytext: null, awareness: null, status, text: "" };
+      });
+    };
+
+    const markReady = () => {
+      if (disposed) return;
+      setState({
+        noteId,
+        ytext,
+        awareness,
+        status: "synced",
+        text: ytext.toString(),
       });
     };
 
@@ -119,110 +125,6 @@ export function useNoteDoc(options: {
       imeGate.push({ update, origin });
     };
 
-    const runSync = async () => {
-      if (disposed || seq === null) return;
-      const batch = pending;
-      pending = [];
-      const update = batch.length > 0 ? Y.mergeUpdates(batch) : null;
-      if (update) setStatus("syncing");
-      try {
-        const result = await pushNoteDocSync(noteId, {
-          update,
-          stateVector: Y.encodeStateVector(doc),
-          since: seq,
-        });
-        if (disposed) return;
-        seq = result.seq;
-        if (result.update) applyRemote(result.update, REMOTE_ORIGIN);
-        setStatus("synced");
-        onProjectionRef.current?.({
-          noteId,
-          body: result.body,
-          updatedAt: result.updatedAt,
-        });
-      } catch {
-        // Requeue so nothing is dropped; the poll retries. Merge order does not
-        // matter — Yjs updates are commutative.
-        if (update) pending.unshift(update);
-        setStatus("offline");
-      }
-    };
-
-    /** Serialize round trips so a slow POST cannot interleave with a newer one. */
-    const sync = (): Promise<void> => {
-      const next = syncing ? syncing.then(runSync, runSync) : runSync();
-      syncing = next.finally(() => {
-        if (syncing === next) syncing = null;
-      });
-      return syncing;
-    };
-
-    const schedulePush = () => {
-      if (pushTimer) return;
-      pushTimer = setTimeout(() => {
-        pushTimer = null;
-        void sync();
-      }, PUSH_DEBOUNCE_MS);
-    };
-
-    const load = (): Promise<void> => {
-      if (loading) return loading;
-      const run = async () => {
-        try {
-          const remote = await fetchNoteDocState(noteId);
-          if (disposed) return;
-          const serverVector = Y.encodeStateVectorFromUpdate(remote.update);
-          applyRemote(remote.update, REMOTE_ORIGIN);
-          seq = remote.seq;
-          setState({
-            noteId,
-            ytext,
-            awareness,
-            status: "synced",
-            text: ytext.toString(),
-          });
-          // Anything this device holds that the server has never seen — offline
-          // edits restored from IndexedDB — has to be pushed, not just pulled.
-          const unsent = encodeMissingUpdate(doc, serverVector);
-          if (unsent) pending.push(unsent);
-          if (pending.length > 0) schedulePush();
-        } catch {
-          setStatus("offline");
-        }
-      };
-      loading = run().finally(() => {
-        loading = null;
-      });
-      return loading;
-    };
-
-    /**
-     * Restore the local copy first: an offline reload stays editable, and the
-     * server load below reconciles whatever it has not seen.
-     */
-    const bootstrap = async () => {
-      if (persistence) {
-        try {
-          await persistence.whenSynced;
-        } catch {
-          // Storage blocked mid-flight — fall through to the network load.
-        }
-        if (disposed) return;
-        if (ytext.length > 0) {
-          setState({
-            noteId,
-            ytext,
-            awareness,
-            status: "syncing",
-            text: ytext.toString(),
-          });
-        }
-      }
-      await load();
-    };
-
-    const tick = () => (seq === null ? load() : sync());
-
     const observer = () => {
       if (disposed) return;
       const next = ytext.toString();
@@ -238,82 +140,97 @@ export function useNoteDoc(options: {
       applyRemote(message.update, BROADCAST_ORIGIN);
     }, userId);
 
-    const onDocUpdate = (update: Uint8Array, origin: unknown) => {
-      if (origin === REMOTE_ORIGIN || origin === BROADCAST_ORIGIN) return;
-      // IndexedDB replaying its stored state is not a new edit; `load()`
-      // reconciles whatever the server is missing from it.
-      if (persistence && origin === persistence) return;
-      pending.push(update);
-      // Peer tabs converge in ~1 frame; duplicate and out-of-order delivery are
-      // both correct inputs to a CRDT, so no sequencing is needed.
-      channel.post({ type: "doc-update", sourceId: tabId, id: noteId, update });
-      schedulePush();
-    };
-    doc.on("update", onDocUpdate);
-
-    /** Fire-and-forget push that survives navigation. */
-    const flushBeacon = () => {
-      if (seq === null || pending.length === 0) return;
-      const update = Y.mergeUpdates(pending);
-      pending = [];
-      void pushNoteDocSync(
-        noteId,
-        { update, since: seq },
-        { keepalive: true },
-      ).catch(() => {});
-    };
-
-    flushRef.current = async () => {
-      if (pushTimer) {
-        clearTimeout(pushTimer);
-        pushTimer = null;
+    /** Peer tabs converge in ~1 frame, whichever transport is in use. */
+    const mirrorToPeerTabs = (update: Uint8Array, origin: unknown) => {
+      if (
+        origin === REMOTE_ORIGIN ||
+        origin === BROADCAST_ORIGIN ||
+        origin === NETWORK_ORIGIN
+      ) {
+        return;
       }
-      await sync();
+      // Replaying the whole stored document to peers helps nobody.
+      if (persistence && origin === persistence) return;
+      channel.post({ type: "doc-update", sourceId: tabId, id: noteId, update });
+    };
+    doc.on("update", mirrorToPeerTabs);
+
+    const transportContext: NoteDocTransportContext = {
+      noteId,
+      doc,
+      applyRemote,
+      setStatus,
+      onReady: markReady,
+      onProjection: (projection) => onProjectionRef.current?.(projection),
+      isDisposed,
+    };
+
+    let transport: NoteDocTransport | null = null;
+
+    /**
+     * Restore the local copy first: an offline reload stays editable, and the
+     * transport reconciles whatever the server has not seen.
+     */
+    const bootstrap = async () => {
+      if (persistence) {
+        try {
+          await persistence.whenSynced;
+        } catch {
+          // Storage blocked mid-flight — fall through to the network.
+        }
+        if (disposed) return;
+        if (ytext.length > 0) {
+          setState({
+            noteId,
+            ytext,
+            awareness,
+            status: "syncing",
+            text: ytext.toString(),
+          });
+        }
+      }
+      if (disposed) return;
+
+      transport = collabUrl
+        ? createWebsocketTransport(transportContext, {
+            url: collabUrl,
+            getToken: () => getTokenRef.current?.() ?? Promise.resolve(null),
+          })
+        : createHttpTransport(transportContext, persistence);
+      flushRef.current = () => transport?.flush() ?? Promise.resolve();
     };
 
     void bootstrap();
 
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void tick();
-    };
-    /** Reconnect: flush whatever queued while the network was down. */
-    const onOnline = () => void tick();
     const onCompositionStart = () => imeGate.start();
     const onCompositionEnd = () => imeGate.end();
-    const poll = window.setInterval(onVisible, DOC_POLL_MS);
-    document.addEventListener("visibilitychange", onVisible);
     document.addEventListener("compositionstart", onCompositionStart, true);
     document.addEventListener("compositionend", onCompositionEnd, true);
-    window.addEventListener("focus", onVisible);
-    window.addEventListener("online", onOnline);
-    window.addEventListener("pagehide", flushBeacon);
+    const onPageHide = () => transport?.flushBeacon();
+    window.addEventListener("pagehide", onPageHide);
 
     return () => {
       disposed = true;
-      if (pushTimer) clearTimeout(pushTimer);
-      window.clearInterval(poll);
-      document.removeEventListener("visibilitychange", onVisible);
       document.removeEventListener(
         "compositionstart",
         onCompositionStart,
         true,
       );
       document.removeEventListener("compositionend", onCompositionEnd, true);
-      window.removeEventListener("focus", onVisible);
-      window.removeEventListener("online", onOnline);
-      window.removeEventListener("pagehide", flushBeacon);
-      doc.off("update", onDocUpdate);
+      window.removeEventListener("pagehide", onPageHide);
+      doc.off("update", mirrorToPeerTabs);
       ytext.unobserve(observer);
       channel.close();
       flushRef.current = async () => {};
       // Switching notes must not strand queued edits. Anything that does not
       // make it out stays in IndexedDB and is reconciled on the next load.
-      flushBeacon();
+      transport?.flushBeacon();
+      transport?.destroy();
       awareness.destroy();
       void persistence?.destroy();
       doc.destroy();
     };
-  }, [enabled, noteId, userId, tabId]);
+  }, [collabUrl, enabled, noteId, userId, tabId]);
 
   const flush = useCallback(() => flushRef.current(), []);
 
