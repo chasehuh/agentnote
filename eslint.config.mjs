@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Bundled service output — lint the sources, not the build artifact.
+    "services/*/dist/**",
   ]),
 ]);
 

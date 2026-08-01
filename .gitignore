@@ -20,6 +20,10 @@
 # production
 /build
 
+# service builds
+services/*/dist
+services/*/node_modules
+
 # misc
 .DS_Store
 *.pem

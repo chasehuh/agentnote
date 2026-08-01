@@ -1,3 +1,11 @@
+packages:
+  - "services/*"
+
+# esbuild fetches its platform binary in a postinstall — the collab service
+# build needs it.
+onlyBuiltDependencies:
+  - esbuild
+
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver

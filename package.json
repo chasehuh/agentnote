@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "collab:dev": "pnpm --filter @agentnote/collab dev",
+    "collab:build": "pnpm --filter @agentnote/collab build",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -17,6 +19,7 @@
     "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.6",
+    "@hocuspocus/provider": "4.4.0",
     "@lezer/highlight": "^1.2.3",
     "@lezer/markdown": "^1.7.1",
     "lib0": "0.2.117",
