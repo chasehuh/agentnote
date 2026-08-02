@@ -810,6 +810,20 @@ export function AgentNoteApp({
     [applyActiveNoteSelection, ensureSafeToLeaveActive],
   );
 
+  // In-editor Markdown links (`[label](/n/{id})`) dispatch this; soft-select
+  // the target note without a full App Router navigation.
+  useEffect(() => {
+    function onOpenNote(event: Event) {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (!id) return;
+      const target = notesRef.current.find((item) => item.id === id);
+      if (!target || target.id === activeIdRef.current) return;
+      void selectNote(target);
+    }
+    window.addEventListener("agentnote:open-note", onOpenNote);
+    return () => window.removeEventListener("agentnote:open-note", onOpenNote);
+  }, [selectNote]);
+
   useEffect(() => {
     if (!activeId) return;
     // CRDT path persists through the doc sync loop, not a whole-document PUT.

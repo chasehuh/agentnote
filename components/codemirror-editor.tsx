@@ -32,6 +32,7 @@ import {
   agentnoteListOutdentOnShiftTab,
   LIST_INDENT_UNIT,
 } from "@/lib/editor/list-indent";
+import { agentnoteLinks } from "@/lib/editor/links";
 import { imagePasteDrop } from "@/lib/editor/paste-images";
 import {
   agentnoteStrikethroughHighlight,
@@ -98,6 +99,7 @@ function editorExtensions(
     drawSelection(),
     markdown({ extensions: agentnoteStrikethroughMarkdown }),
     agentnoteStrikethroughHighlight(),
+    agentnoteLinks(),
     placeholder(placeholderText),
     indentUnit.of(LIST_INDENT_UNIT),
     EditorState.readOnly.of(readOnly),
