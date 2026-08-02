@@ -232,6 +232,7 @@ export class ImagePreviewWidget extends WidgetType {
 
 function buildImageDecorations(doc: string): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
+  // extractMarkdownImages already skips video URLs (owned by videoWidgets).
   const images = extractMarkdownImages(doc);
   // Sort by index so RangeSetBuilder gets ascending positions.
   const sorted = [...images].sort((a, b) => a.index - b.index);
