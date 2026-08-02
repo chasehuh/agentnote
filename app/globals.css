@@ -668,6 +668,17 @@ a.zed-save-error__action {
   background: var(--c-editor);
 }
 
+.cm-md-link {
+  color: var(--c-text-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.cm-md-link:hover {
+  filter: brightness(1.15);
+}
+
 .cm-md-image {
   position: relative;
   display: block;

@@ -810,6 +810,22 @@ export function AgentNoteApp({
     [applyActiveNoteSelection, ensureSafeToLeaveActive],
   );
 
+  // In-app markdown links (`/n/{id}`) dispatch from the CM6 link extension.
+  useEffect(() => {
+    function onOpenNote(event: Event) {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (!id) return;
+      const target = notesRef.current.find((item) => item.id === id);
+      // Unknown id: soft no-op (do not navigate the whole app to a 404).
+      if (!target || target.id === activeIdRef.current) return;
+      void selectNote(target);
+    }
+    window.addEventListener("agentnote:open-note", onOpenNote);
+    return () => {
+      window.removeEventListener("agentnote:open-note", onOpenNote);
+    };
+  }, [selectNote]);
+
   useEffect(() => {
     if (!activeId) return;
     // CRDT path persists through the doc sync loop, not a whole-document PUT.
