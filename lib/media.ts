@@ -64,21 +64,214 @@ function parseImageLabel(label: string): {
   };
 }
 
+export type VideoKind = "youtube" | "vimeo" | "file";
+
+export type ParsedVideoUrl = {
+  kind: VideoKind;
+  /** Safe embed/src URL for the player */
+  embedUrl: string;
+  id?: string;
+};
+
+export type MarkdownVideo = {
+  kind: VideoKind;
+  /** Original URL as written in the note */
+  url: string;
+  /** Safe embed/src URL for the player */
+  embedUrl: string;
+  alt: string;
+  width: number | null;
+  index: number;
+  length: number;
+};
+
+const YOUTUBE_HOSTS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "youtube-nocookie.com",
+  "www.youtube-nocookie.com",
+]);
+
+const YOUTUBE_SHORT_HOSTS = new Set(["youtu.be", "www.youtu.be"]);
+
+const VIMEO_HOSTS = new Set(["vimeo.com", "www.vimeo.com"]);
+
+const VIDEO_FILE_EXT_RE = /\.(mp4|webm|ogg)$/i;
+
+function isYouTubeId(id: string) {
+  return /^[\w-]{6,}$/.test(id);
+}
+
+/**
+ * Detect allowlisted provider embeds or direct video file URLs.
+ * Only http(s); iframe hosts are allowlisted (no arbitrary oEmbed fetch).
+ */
+export function parseVideoUrl(url: string): ParsedVideoUrl | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return null;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+
+  if (YOUTUBE_SHORT_HOSTS.has(host)) {
+    const id = parsed.pathname.split("/").filter(Boolean)[0] ?? "";
+    if (!isYouTubeId(id)) return null;
+    return {
+      kind: "youtube",
+      id,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${id}`,
+    };
+  }
+
+  if (YOUTUBE_HOSTS.has(host)) {
+    const v = parsed.searchParams.get("v");
+    if (v && isYouTubeId(v)) {
+      return {
+        kind: "youtube",
+        id: v,
+        embedUrl: `https://www.youtube-nocookie.com/embed/${v}`,
+      };
+    }
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (
+      (parts[0] === "embed" || parts[0] === "shorts") &&
+      parts[1] &&
+      isYouTubeId(parts[1])
+    ) {
+      return {
+        kind: "youtube",
+        id: parts[1],
+        embedUrl: `https://www.youtube-nocookie.com/embed/${parts[1]}`,
+      };
+    }
+    return null;
+  }
+
+  if (VIMEO_HOSTS.has(host)) {
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    let id: string | undefined;
+    if (parts[0] === "video" && parts[1] && /^\d+$/.test(parts[1])) {
+      id = parts[1];
+    } else if (parts[0] && /^\d+$/.test(parts[0])) {
+      id = parts[0];
+    }
+    if (!id) return null;
+    return {
+      kind: "vimeo",
+      id,
+      embedUrl: `https://player.vimeo.com/video/${id}`,
+    };
+  }
+
+  if (host === "player.vimeo.com") {
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts[0] === "video" && parts[1] && /^\d+$/.test(parts[1])) {
+      return {
+        kind: "vimeo",
+        id: parts[1],
+        embedUrl: `https://player.vimeo.com/video/${parts[1]}`,
+      };
+    }
+    return null;
+  }
+
+  // Direct files: extension on the path only (query/hash ignored).
+  if (VIDEO_FILE_EXT_RE.test(parsed.pathname)) {
+    return { kind: "file", embedUrl: url };
+  }
+
+  return null;
+}
+
 /** Obsidian/Notion-style image markdown: ![alt|400](url) */
 export function extractMarkdownImages(text: string): MarkdownImage[] {
   const out: MarkdownImage[] = [];
   const re = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
   for (const match of text.matchAll(re)) {
+    const url = match[2] ?? "";
+    // Video markdown images are owned by video widgets — skip to avoid broken <img>.
+    if (parseVideoUrl(url)) continue;
     const label = match[1] ?? "";
     const parsed = parseImageLabel(label);
     out.push({
       ...parsed,
-      url: match[2] ?? "",
+      url,
       index: match.index ?? 0,
       length: match[0]?.length ?? 0,
     });
   }
   return out;
+}
+
+/**
+ * Video targets from `![alt|width](video-url)` and bare provider/file URLs
+ * on their own line.
+ */
+export function extractMarkdownVideos(text: string): MarkdownVideo[] {
+  const out: MarkdownVideo[] = [];
+  const covered = new Set<string>();
+
+  const markRange = (index: number, length: number) => {
+    covered.add(`${index}:${length}`);
+  };
+  const isCovered = (index: number, length: number) =>
+    covered.has(`${index}:${length}`);
+
+  const imageRe = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
+  for (const match of text.matchAll(imageRe)) {
+    const url = match[2] ?? "";
+    const parsed = parseVideoUrl(url);
+    if (!parsed) continue;
+    const index = match.index ?? 0;
+    const length = match[0]?.length ?? 0;
+    const label = parseImageLabel(match[1] ?? "");
+    out.push({
+      kind: parsed.kind,
+      url,
+      embedUrl: parsed.embedUrl,
+      alt: label.alt,
+      width: label.width,
+      index,
+      length,
+    });
+    markRange(index, length);
+  }
+
+  // Bare http(s) URL alone on a line (Obsidian-like paste UX).
+  const lineRe = /^(https?:\/\/[^\s]+)\s*$/gm;
+  for (const match of text.matchAll(lineRe)) {
+    const url = match[1] ?? "";
+    const parsed = parseVideoUrl(url);
+    if (!parsed) continue;
+    const index = match.index ?? 0;
+    const length = url.length;
+    if (isCovered(index, length)) continue;
+    // Skip if this span sits inside an already-captured markdown image mark.
+    const overlapsImage = out.some(
+      (video) => index >= video.index && index < video.index + video.length,
+    );
+    if (overlapsImage) continue;
+    out.push({
+      kind: parsed.kind,
+      url,
+      embedUrl: parsed.embedUrl,
+      alt: "",
+      width: null,
+      index,
+      length,
+    });
+    markRange(index, length);
+  }
+
+  return out.sort((a, b) => a.index - b.index);
 }
 
 export function withMarkdownImageWidth(

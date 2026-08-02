@@ -26,6 +26,7 @@ import { applyExternalValue } from "@/lib/editor/apply-external";
 import { arrowInputHandler, arrowPasteFilter } from "@/lib/editor/arrow-input";
 import { imageWidgets } from "@/lib/editor/image-widgets";
 import { agentnoteLinks } from "@/lib/editor/links";
+import { videoWidgets } from "@/lib/editor/video-widgets";
 import { agentnoteLineKillKeymap } from "@/lib/editor/line-kill";
 import { agentnoteInsertNewlineContinueMarkup } from "@/lib/editor/list-continue";
 import {
@@ -141,6 +142,7 @@ function editorExtensions(
           imagePasteDrop(),
         ]),
     imageWidgets,
+    videoWidgets,
     // Obsidian-style clickable markdown links (edit + readOnly).
     agentnoteLinks(),
     // Zed-like one_page: content-only spacer so gutters stay CM-owned geometry
