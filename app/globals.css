@@ -720,6 +720,29 @@ a.zed-save-error__action {
   outline: none;
 }
 
+.cm-md-video {
+  position: relative;
+  display: block;
+  max-width: calc(100% - 28px);
+  margin: 0 28px 0 14px;
+  padding: 8px 0 16px;
+  line-height: 0;
+}
+
+.cm-md-video__player {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--c-border-variant);
+  background: var(--c-elevated);
+}
+
+.cm-md-video video.cm-md-video__player {
+  object-fit: contain;
+  background: #000;
+}
+
 .zed-empty {
   flex: 1;
   display: flex;
