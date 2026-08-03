@@ -156,28 +156,25 @@ describe("openHref", () => {
 });
 
 describe("hrefAtPos", () => {
-  it("resolves anywhere inside [label](url), including the hidden URL span", () => {
+  it("resolves only inside the visible label, not chrome or hidden URL", () => {
     const doc = "- [mobidoo docs](https://docs.sume.com/enterprise/mobidoo)\n";
     const state = EditorState.create({
       doc,
       extensions: [markdown(), agentnoteLinks()],
     });
-    // From AST dump: Link 2..58, label ~3..15, URL 17..57
+    // Label "mobidoo docs" is [3, 15); URL starts at 17.
     expect(hrefAtPos(state, 3)).toBe(
       "https://docs.sume.com/enterprise/mobidoo",
     );
     expect(hrefAtPos(state, 10)).toBe(
       "https://docs.sume.com/enterprise/mobidoo",
     );
-    expect(hrefAtPos(state, 17)).toBe(
+    expect(hrefAtPos(state, 14)).toBe(
       "https://docs.sume.com/enterprise/mobidoo",
     );
-    expect(hrefAtPos(state, 40)).toBe(
-      "https://docs.sume.com/enterprise/mobidoo",
-    );
-    expect(hrefAtPos(state, 57)).toBe(
-      "https://docs.sume.com/enterprise/mobidoo",
-    );
+    expect(hrefAtPos(state, 15)).toBeNull(); // `]`
+    expect(hrefAtPos(state, 17)).toBeNull(); // hidden URL
+    expect(hrefAtPos(state, 40)).toBeNull();
     expect(hrefAtPos(state, 0)).toBeNull(); // list marker
   });
 

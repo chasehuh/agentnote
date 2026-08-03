@@ -77,7 +77,7 @@ const FILE_LIKE_TLDS = new Set([
 export type LinkHit = { from: number; to: number; url: string };
 
 function collectMarkdownLinks(state: EditorState): {
-  /** Full clickable span (entire `[label](url)` / autolink), for hit-testing. */
+  /** Clickable span = visible link text only (label / autolink URL). */
   hits: LinkHit[];
   hide: { from: number; to: number }[];
   labels: { from: number; to: number }[];
@@ -123,19 +123,18 @@ function collectMarkdownLinks(state: EditorState): {
         // Keep the URL visible; hide only <…> wrappers.
         for (const mark of marks) hide.push({ from: mark.from, to: mark.to });
         labels.push({ from: urlFrom, to: urlTo });
-        hits.push({ from: node.from, to: node.to, url });
+        // Clickable = visible URL text, not the surrounding `<>` chrome.
+        hits.push({ from: urlFrom, to: urlTo, url });
         return;
       }
 
-      // [label](url) — hide chrome + destination; show label as the link.
-      // Hit-test the *whole* Link node: with Decoration.replace the URL is
-      // zero-width, so posAtCoords often lands inside the hidden URL range.
+      // [label](url) — hide chrome + destination; only the label is clickable.
       for (const mark of marks) hide.push({ from: mark.from, to: mark.to });
       hide.push({ from: urlFrom, to: urlTo });
       if (labelFrom >= 0 && labelTo > labelFrom) {
         labels.push({ from: labelFrom, to: labelTo });
+        hits.push({ from: labelFrom, to: labelTo, url });
       }
-      hits.push({ from: node.from, to: node.to, url });
     },
   });
 
@@ -305,13 +304,13 @@ export function noteIdFromInAppHref(href: string): string | null {
   return null;
 }
 
-/** Resolve a navigable href at a document position (label, chrome, or URL). */
+/** Resolve a navigable href at a document position inside visible link text. */
 export function hrefAtPos(state: EditorState, pos: number): string | null {
   const md = collectMarkdownLinks(state);
   const bare = collectBareLinks(state, md.hits);
   for (const hit of [...md.hits, ...bare]) {
-    // Inclusive end: posAtCoords often lands on the boundary after a replace.
-    if (pos >= hit.from && pos <= hit.to) return resolveHref(hit.url);
+    // Half-open [from, to): only the visible label / bare URL, not hidden chrome.
+    if (pos >= hit.from && pos < hit.to) return resolveHref(hit.url);
   }
   return null;
 }
@@ -357,9 +356,30 @@ function tryOpenLinkAtPointer(
   if (event.shiftKey || event.altKey || event.button !== 0) return false;
   // Cmd/Ctrl-click: let the editor keep native multi-cursor / selection behavior.
   if (event.metaKey || event.ctrlKey) return false;
-  const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-  if (pos == null) return false;
-  const href = hrefAtPos(view.state, pos);
+
+  // Only the painted label / bare-URL mark — not neighboring text whose
+  // posAtCoords can land in a zero-width replaced `](url)` span.
+  const target = event.target;
+  const el =
+    target instanceof Element
+      ? target
+      : target instanceof Node
+        ? target.parentElement
+        : null;
+  if (!el) return false;
+  const linkEl = el.closest(".cm-md-link");
+  if (!linkEl || !view.contentDOM.contains(linkEl)) return false;
+
+  const coordPos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+  let href = coordPos != null ? hrefAtPos(view.state, coordPos) : null;
+  if (!href) {
+    // Coords often map into the hidden URL; fall back to the mark's doc pos.
+    try {
+      href = hrefAtPos(view.state, view.posAtDOM(linkEl, 0));
+    } catch {
+      return false;
+    }
+  }
   if (!href) return false;
   event.preventDefault();
   event.stopPropagation();
