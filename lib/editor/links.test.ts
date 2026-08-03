@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   agentnoteLinks,
   findBareLinksInText,
+  hrefAtPos,
   noteIdFromInAppHref,
   openHref,
   resolveHref,
@@ -91,14 +92,45 @@ describe("openHref", () => {
     window.removeEventListener("agentnote:open-note", handler);
   });
 
-  it("opens external https in a new tab", () => {
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
+  it("opens external https via a temporary anchor click", () => {
+    const click = vi.fn();
+    const originalCreate = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+      const el = originalCreate(tag);
+      if (tag === "a") {
+        el.click = click;
+      }
+      return el;
+    });
     openHref("https://example.com");
-    expect(open).toHaveBeenCalledWith(
-      "https://example.com",
-      "_blank",
-      "noopener,noreferrer",
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("hrefAtPos", () => {
+  it("resolves anywhere inside [label](url), including the hidden URL span", () => {
+    const doc = "- [mobidoo docs](https://docs.sume.com/enterprise/mobidoo)\n";
+    const state = EditorState.create({
+      doc,
+      extensions: [markdown(), agentnoteLinks()],
+    });
+    // From AST dump: Link 2..58, label ~3..15, URL 17..57
+    expect(hrefAtPos(state, 3)).toBe(
+      "https://docs.sume.com/enterprise/mobidoo",
     );
+    expect(hrefAtPos(state, 10)).toBe(
+      "https://docs.sume.com/enterprise/mobidoo",
+    );
+    expect(hrefAtPos(state, 17)).toBe(
+      "https://docs.sume.com/enterprise/mobidoo",
+    );
+    expect(hrefAtPos(state, 40)).toBe(
+      "https://docs.sume.com/enterprise/mobidoo",
+    );
+    expect(hrefAtPos(state, 57)).toBe(
+      "https://docs.sume.com/enterprise/mobidoo",
+    );
+    expect(hrefAtPos(state, 0)).toBeNull(); // list marker
   });
 });
 
