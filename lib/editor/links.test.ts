@@ -7,6 +7,7 @@ import {
   agentnoteLinks,
   findBareLinksInText,
   hrefAtPos,
+  looksLikeWebHost,
   noteIdFromInAppHref,
   openHref,
   resolveHref,
@@ -26,13 +27,37 @@ describe("resolveHref", () => {
     expect(resolveHref("/?n=abc123")).toBe("/?n=abc123");
   });
 
+  it("prefixes https for scheme-less web hosts", () => {
+    expect(resolveHref("docs.sume.com/enterprise/mobidoo")).toBe(
+      "https://docs.sume.com/enterprise/mobidoo",
+    );
+    expect(resolveHref("www.example.com")).toBe("https://www.example.com");
+    expect(resolveHref("//docs.sume.com/x")).toBe("https://docs.sume.com/x");
+  });
+
   it("rejects javascript: and unknown schemes / relative paths", () => {
     expect(resolveHref("javascript:alert(1)")).toBeNull();
     expect(resolveHref("data:text/html,hi")).toBeNull();
     expect(resolveHref("/thoughts/foo")).toBeNull();
     expect(resolveHref("../escape")).toBeNull();
+    expect(resolveHref("README.md")).toBeNull();
     expect(resolveHref("")).toBeNull();
     expect(resolveHref("   ")).toBeNull();
+  });
+});
+
+describe("looksLikeWebHost", () => {
+  it("accepts host.tld and www hosts", () => {
+    expect(looksLikeWebHost("docs.sume.com/enterprise/mobidoo")).toBe(true);
+    expect(looksLikeWebHost("example.com")).toBe(true);
+    expect(looksLikeWebHost("www.example.com/a")).toBe(true);
+  });
+
+  it("rejects file-like names and non-hosts", () => {
+    expect(looksLikeWebHost("README.md")).toBe(false);
+    expect(looksLikeWebHost("app.tsx")).toBe(false);
+    expect(looksLikeWebHost("/n/abc")).toBe(false);
+    expect(looksLikeWebHost("notaurl")).toBe(false);
   });
 });
 
@@ -60,6 +85,29 @@ describe("findBareLinksInText", () => {
         url: "https://example.com/path",
       },
     ]);
+  });
+
+  it("finds www and scheme-less host urls", () => {
+    const www = "see www.example.com/x end";
+    expect(findBareLinksInText(www)).toEqual([
+      {
+        from: "see ".length,
+        to: "see www.example.com/x".length,
+        url: "www.example.com/x",
+      },
+    ]);
+    const host = "see docs.sume.com/enterprise/mobidoo end";
+    expect(findBareLinksInText(host)).toEqual([
+      {
+        from: "see ".length,
+        to: "see docs.sume.com/enterprise/mobidoo".length,
+        url: "docs.sume.com/enterprise/mobidoo",
+      },
+    ]);
+  });
+
+  it("does not treat README.md as a bare link", () => {
+    expect(findBareLinksInText("open README.md please")).toEqual([]);
   });
 
   it("skips urls inside ]( destinations of links/images", () => {
@@ -131,6 +179,17 @@ describe("hrefAtPos", () => {
       "https://docs.sume.com/enterprise/mobidoo",
     );
     expect(hrefAtPos(state, 0)).toBeNull(); // list marker
+  });
+
+  it("opens scheme-less [label](host/path) as https", () => {
+    const doc = "- [mobidoo docs](docs.sume.com/enterprise/mobidoo)\n";
+    const state = EditorState.create({
+      doc,
+      extensions: [markdown(), agentnoteLinks()],
+    });
+    expect(hrefAtPos(state, 10)).toBe(
+      "https://docs.sume.com/enterprise/mobidoo",
+    );
   });
 });
 
