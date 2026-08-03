@@ -19,11 +19,60 @@ const hideMark = Decoration.replace({});
 const linkLabelMark = Decoration.mark({ class: "cm-md-link" });
 const bareLinkMark = Decoration.mark({ class: "cm-md-link cm-md-link--bare" });
 
-/** Bare http(s) URLs in the buffer (not inside `](…)` destinations). */
-const BARE_LINK_RE = /https?:\/\/[^\s)<>]+/g;
+/**
+ * Bare URLs in the buffer (not inside `](…)` destinations):
+ * - http(s)://…
+ * - www.…
+ * - host.tld[/path] (scheme-less; resolved to https://)
+ */
+const BARE_LINK_RE =
+  /(?:https?:\/\/|www\.)[^\s)<>]+|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?::\d{1,5})?(?:\/[^\s)<>]*)?/gi;
 
 /** In-app note deep link: `/n/{id}`. */
 const IN_APP_NOTE_PATH_RE = /^\/n\/([^/?#]+)\/?$/;
+
+/**
+ * Filename-ish "TLDs" — reject bare `README.md` / `foo.ts` when there is no
+ * path/query (still allow `docs.sume.com/…`).
+ */
+const FILE_LIKE_TLDS = new Set([
+  "md",
+  "mdx",
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "mjs",
+  "cjs",
+  "json",
+  "css",
+  "scss",
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "svg",
+  "webp",
+  "ico",
+  "pdf",
+  "txt",
+  "html",
+  "htm",
+  "yml",
+  "yaml",
+  "toml",
+  "lock",
+  "map",
+  "py",
+  "rb",
+  "go",
+  "rs",
+  "java",
+  "kt",
+  "swift",
+  "sh",
+  "env",
+]);
 
 export type LinkHit = { from: number; to: number; url: string };
 
@@ -101,6 +150,43 @@ export function collectBareLinks(
   return findBareLinksInText(state.doc.toString(), occupied);
 }
 
+/**
+ * True for scheme-less strings that look like a web host (+ optional path).
+ * Examples: `docs.sume.com/enterprise/mobidoo`, `www.example.com`, `example.com:443/a`.
+ */
+export function looksLikeWebHost(raw: string): boolean {
+  const url = raw.trim();
+  if (!url || /\s/.test(url)) return false;
+  if (url.startsWith("/") || url.startsWith(".") || url.startsWith("#")) {
+    return false;
+  }
+  if (url.includes("://")) return false;
+  // Reject other schemes (`javascript:`, `mailto:`, …) — handled separately.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return false;
+
+  const hostPart = url.split(/[/?#]/, 1)[0] ?? "";
+  if (!hostPart) return false;
+
+  const hostMatch = /^(.+?)(?::(\d{1,5}))?$/.exec(hostPart);
+  if (!hostMatch?.[1]) return false;
+  const host = hostMatch[1];
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i.test(
+      host,
+    )
+  ) {
+    return false;
+  }
+
+  const labels = host.split(".");
+  const tld = labels[labels.length - 1]?.toLowerCase() ?? "";
+  if (tld.length < 2 || /^\d+$/.test(tld)) return false;
+  // `README.md` / `app.tsx` without a path should not become https links.
+  if (FILE_LIKE_TLDS.has(tld) && !/[/?#]/.test(url)) return false;
+
+  return true;
+}
+
 /** Pure helper for unit tests — same rules as the editor bare-link scanner. */
 export function findBareLinksInText(
   doc: string,
@@ -109,11 +195,14 @@ export function findBareLinksInText(
   const hits: LinkHit[] = [];
   for (const match of doc.matchAll(BARE_LINK_RE)) {
     const from = match.index ?? 0;
-    const to = from + match[0].length;
+    const raw = match[0];
+    const to = from + raw.length;
     if (occupied.some((hit) => !(to <= hit.from || from >= hit.to))) continue;
     // Skip destinations inside markdown image / link markup.
     if (from >= 2 && doc.slice(from - 2, from) === "](") continue;
-    hits.push({ from, to, url: match[0] });
+    // Drop false positives the regex alone cannot filter (e.g. `README.md`).
+    if (!resolveHref(raw)) continue;
+    hits.push({ from, to, url: raw });
   }
   return hits;
 }
@@ -171,8 +260,9 @@ const visibleLinkMarks = StateField.define<DecorationSet>({
 });
 
 /**
- * Allow only http(s), mailto, in-app `/n/{id}`, and legacy `?n=` / `/?n=`
- * query forms. Rejects `javascript:` and other unknown schemes.
+ * Allow http(s), mailto, in-app `/n/{id}`, legacy `?n=` / `/?n=`,
+ * protocol-relative `//host…`, and scheme-less web hosts (→ `https://…`).
+ * Rejects `javascript:` and other unknown schemes.
  */
 export function resolveHref(raw: string): string | null {
   const url = raw.trim();
@@ -183,6 +273,12 @@ export function resolveHref(raw: string): string | null {
   }
   if (/^https?:\/\//i.test(url)) return url;
   if (/^mailto:/i.test(url)) return url;
+  if (url.startsWith("//") && looksLikeWebHost(url.slice(2))) {
+    return `https:${url}`;
+  }
+  if (looksLikeWebHost(url)) {
+    return `https://${url}`;
+  }
   return null;
 }
 
