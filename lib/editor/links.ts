@@ -4,6 +4,7 @@ import {
 } from "@codemirror/language";
 import {
   EditorState,
+  Prec,
   RangeSetBuilder,
   StateField,
   type Extension,
@@ -27,6 +28,7 @@ const IN_APP_NOTE_PATH_RE = /^\/n\/([^/?#]+)\/?$/;
 export type LinkHit = { from: number; to: number; url: string };
 
 function collectMarkdownLinks(state: EditorState): {
+  /** Full clickable span (entire `[label](url)` / autolink), for hit-testing. */
   hits: LinkHit[];
   hide: { from: number; to: number }[];
   labels: { from: number; to: number }[];
@@ -72,17 +74,19 @@ function collectMarkdownLinks(state: EditorState): {
         // Keep the URL visible; hide only <…> wrappers.
         for (const mark of marks) hide.push({ from: mark.from, to: mark.to });
         labels.push({ from: urlFrom, to: urlTo });
-        hits.push({ from: urlFrom, to: urlTo, url });
+        hits.push({ from: node.from, to: node.to, url });
         return;
       }
 
       // [label](url) — hide chrome + destination; show label as the link.
+      // Hit-test the *whole* Link node: with Decoration.replace the URL is
+      // zero-width, so posAtCoords often lands inside the hidden URL range.
       for (const mark of marks) hide.push({ from: mark.from, to: mark.to });
       hide.push({ from: urlFrom, to: urlTo });
       if (labelFrom >= 0 && labelTo > labelFrom) {
         labels.push({ from: labelFrom, to: labelTo });
-        hits.push({ from: labelFrom, to: labelTo, url });
       }
+      hits.push({ from: node.from, to: node.to, url });
     },
   });
 
@@ -205,10 +209,12 @@ export function noteIdFromInAppHref(href: string): string | null {
   return null;
 }
 
-function linkAt(state: EditorState, pos: number): string | null {
+/** Resolve a navigable href at a document position (label, chrome, or URL). */
+export function hrefAtPos(state: EditorState, pos: number): string | null {
   const md = collectMarkdownLinks(state);
   const bare = collectBareLinks(state, md.hits);
   for (const hit of [...md.hits, ...bare]) {
+    // Inclusive end: posAtCoords often lands on the boundary after a replace.
     if (pos >= hit.from && pos <= hit.to) return resolveHref(hit.url);
   }
   return null;
@@ -219,6 +225,18 @@ function openNoteById(noteId: string) {
   window.dispatchEvent(
     new CustomEvent("agentnote:open-note", { detail: { id: noteId } }),
   );
+}
+
+/** Open http(s) via a real <a> click — more reliable than window.open under CM updates. */
+function openExternalInNewTab(href: string) {
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.target = "_blank";
+  anchor.rel = "noopener noreferrer";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 export function openHref(href: string) {
@@ -233,22 +251,42 @@ export function openHref(href: string) {
     return;
   }
 
-  window.open(href, "_blank", "noopener,noreferrer");
+  openExternalInNewTab(href);
+}
+
+function tryOpenLinkAtPointer(
+  event: MouseEvent,
+  view: EditorView,
+): boolean {
+  if (event.shiftKey || event.altKey || event.button !== 0) return false;
+  // Cmd/Ctrl-click: let the editor keep native multi-cursor / selection behavior.
+  if (event.metaKey || event.ctrlKey) return false;
+  const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+  if (pos == null) return false;
+  const href = hrefAtPos(view.state, pos);
+  if (!href) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  openHref(href);
+  return true;
 }
 
 function linkClickHandler() {
-  return EditorView.domEventHandlers({
-    click(event, view) {
-      if (event.shiftKey || event.altKey || event.button !== 0) return false;
-      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-      if (pos == null) return false;
-      const href = linkAt(view.state, pos);
-      if (!href) return false;
-      event.preventDefault();
-      openHref(href);
-      return true;
-    },
-  });
+  // Highest precedence so we win over other contentDOM click handlers, and
+  // mousedown so we still open if CM defers the click handler to a microtask
+  // (popup / navigation gesture would otherwise be lost under CRDT updates).
+  return Prec.highest(
+    EditorView.domEventHandlers({
+      mousedown(event, view) {
+        return tryOpenLinkAtPointer(event, view);
+      },
+      click(event, view) {
+        // If mousedown already handled it, defaultPrevented is set.
+        if (event.defaultPrevented) return true;
+        return tryOpenLinkAtPointer(event, view);
+      },
+    }),
+  );
 }
 
 /** Obsidian-style links: `[label](url)` chrome hidden; label / bare URL clickable. */
