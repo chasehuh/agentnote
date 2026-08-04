@@ -14,9 +14,11 @@ import {
   WRAP_STORAGE_KEY,
   isWrapPreference,
 } from "@/lib/preferences";
+import { bodyFingerprint } from "@/lib/body-fingerprint";
 import {
   canAdvanceBaseWithoutAdopting,
   canApplyRemoteBody,
+  isDraftBaseContentCurrent,
   isDraftBaseCurrent,
   isRemoteNoteNewer,
   shouldAcceptDraftSeq,
@@ -242,6 +244,16 @@ export function AgentNoteApp({
     resolveInitialNote(initialNotes, initialSelectedId)?.updated_at ?? "",
   );
   /**
+   * RAW server body at `baseUpdatedAtRef`'s generation (pre arrow-substitution).
+   * Advances only alongside the base token — never from a peer draft, whose
+   * text is unacked. Its fingerprint lets drafts and PUTs prove their base
+   * CONTENT, not just its timestamp: a poll can advance the list row past a
+   * stale dirty buffer, and a token alone is then launderable (0804 clobber).
+   */
+  const baseBodyRef = useRef(
+    resolveInitialNote(initialNotes, initialSelectedId)?.body ?? "",
+  );
+  /**
    * Buffer value the autosave effect last processed. A poll/broadcast can
    * replace `activeNote` while the buffer is untouched; only a buffer change
    * may arm autosave — a row refresh must never turn an idle tab into a
@@ -299,6 +311,7 @@ export function AgentNoteApp({
       // Keep the legacy tokens coherent so publish/archive still work.
       lastAckedBodyRef.current = projection.body;
       baseUpdatedAtRef.current = projection.updatedAt;
+      baseBodyRef.current = projection.body;
     }
   }, []);
 
@@ -355,6 +368,7 @@ export function AgentNoteApp({
     // false conflict.
     if (canAdvanceBaseWithoutAdopting(nextBody, lastAckedBodyRef.current)) {
       baseUpdatedAtRef.current = note.updated_at;
+      baseBodyRef.current = note.body;
     }
 
     if (
@@ -369,12 +383,14 @@ export function AgentNoteApp({
     if (bodyRefState.current === nextBody) {
       lastAckedBodyRef.current = nextBody;
       baseUpdatedAtRef.current = note.updated_at;
+      baseBodyRef.current = note.body;
       return;
     }
     skipNextSave.current = true;
     setBodyNow(nextBody);
     lastAckedBodyRef.current = nextBody;
     baseUpdatedAtRef.current = note.updated_at;
+    baseBodyRef.current = note.body;
     setSaveErrorKind(null);
     setSaveStateNow("saved");
   }, [setBodyNow, setSaveStateNow]);
@@ -428,6 +444,18 @@ export function AgentNoteApp({
         ]);
       });
       if (activeIdRef.current !== payload.id) return;
+      // Generation timestamps can be laundered (post-#73 0804 clobber: a poll
+      // advanced the sender's list row past its stale dirty buffer, and the
+      // row-stamped draft passed the check above). The sender must also prove
+      // its base CONTENT matches ours; missing fingerprint fails closed.
+      if (
+        !isDraftBaseContentCurrent(
+          bodyFingerprint(baseBodyRef.current),
+          payload.baseFingerprint,
+        )
+      ) {
+        return;
+      }
       // Match applyRemoteNote: never clobber an in-progress local edit.
       if (
         !canApplyRemoteBody(saveStateRef.current, {
@@ -441,8 +469,9 @@ export function AgentNoteApp({
       skipNextSave.current = true;
       setBodyNow(nextBody);
       lastAckedBodyRef.current = nextBody;
-      // A draft is unsaved peer text — the gate above proved the generation is
-      // unchanged, so the base stays at that same generation.
+      // A draft is unsaved peer text — the gates above proved the generation
+      // and its content are unchanged, so the base (token AND `baseBodyRef`)
+      // stays put; only server-acked bodies may advance it.
       baseUpdatedAtRef.current = existing.updated_at;
       setSaveErrorKind(null);
       setSaveStateNow("saved");
@@ -453,7 +482,6 @@ export function AgentNoteApp({
   const broadcastDraft = useCallback((id: string, nextBody: string) => {
     if (draftTimer.current) clearTimeout(draftTimer.current);
     draftTimer.current = setTimeout(() => {
-      const existing = notesRef.current.find((item) => item.id === id);
       draftSeqRef.current += 1;
       syncPost.current({
         type: "draft",
@@ -462,7 +490,12 @@ export function AgentNoteApp({
         body: nextBody,
         title: deriveNoteTitle(nextBody),
         at: Date.now(),
-        baseUpdatedAt: existing?.updated_at,
+        // Stamp the BUFFER's own base, never the list row: a poll/upsert can
+        // advance the row past a stale dirty buffer, and a row-stamped draft
+        // then walks into a clean peer as "current" — that peer's next PUT
+        // carries a valid token over stale content (post-#73 0804 clobber).
+        baseUpdatedAt: baseUpdatedAtRef.current,
+        baseFingerprint: bodyFingerprint(baseBodyRef.current),
         draftSeq: draftSeqRef.current,
       });
     }, DRAFT_BROADCAST_MS);
@@ -532,6 +565,7 @@ export function AgentNoteApp({
       setBodyNow(nextBody);
       lastAckedBodyRef.current = nextBody;
       baseUpdatedAtRef.current = note.updated_at;
+      baseBodyRef.current = note.body;
       setSaveErrorKind(null);
       setSaveStateNow(nextBody === note.body ? "saved" : "dirty");
       replaceNoteUrl(note.id);
@@ -551,6 +585,7 @@ export function AgentNoteApp({
     setBodyNow("");
     lastAckedBodyRef.current = "";
     baseUpdatedAtRef.current = "";
+    baseBodyRef.current = "";
     setSaveErrorKind(null);
     setSaveStateNow("saved");
     replaceNoteUrl(null);
@@ -595,6 +630,11 @@ export function AgentNoteApp({
           setSaveStateNow("error");
           return false;
         }
+        // Content proof for the token above: the server refuses this PUT when
+        // its current body is not the one this buffer is based on, even if the
+        // token was laundered onto stale content by a path the client-side
+        // guards missed (or by an older bundle still open in another tab).
+        const baseFingerprint = bodyFingerprint(baseBodyRef.current);
 
         try {
           const response = await fetch(`/api/notes/${id}`, {
@@ -604,6 +644,7 @@ export function AgentNoteApp({
               title: deriveNoteTitle(nextBody),
               body: nextBody,
               expected_updated_at: expectedUpdatedAt,
+              base_fingerprint: baseFingerprint,
             }),
           });
 
@@ -671,6 +712,7 @@ export function AgentNoteApp({
           // Our write landed: the server is now at this generation regardless of
           // whether the buffer has since advanced.
           baseUpdatedAtRef.current = data.note.updated_at;
+          baseBodyRef.current = data.note.body;
 
           const ackedBody = substituteAsciiArrows(data.note.body).text;
           if (shouldMarkSavedAfterPersist(nextBody, bodyRefState.current)) {
@@ -756,6 +798,7 @@ export function AgentNoteApp({
       if (activeIdRef.current !== id) return;
       // The user chose to overwrite the server version with this buffer.
       baseUpdatedAtRef.current = data.note.updated_at;
+      baseBodyRef.current = data.note.body;
     } catch {
       return;
     }
@@ -776,6 +819,7 @@ export function AgentNoteApp({
       setBodyNow(nextBody);
       lastAckedBodyRef.current = nextBody;
       baseUpdatedAtRef.current = data.note.updated_at;
+      baseBodyRef.current = data.note.body;
       setNotes((prev) =>
         sortNotesByRecent([
           data.note,
@@ -1014,12 +1058,14 @@ export function AgentNoteApp({
               setBodyNow(nextBody);
               lastAckedBodyRef.current = nextBody;
               baseUpdatedAtRef.current = fallback.updated_at;
+              baseBodyRef.current = fallback.body;
               replaceNoteUrl(fallback.id);
             } else {
               setActiveId(null);
               setBodyNow("");
               lastAckedBodyRef.current = "";
               baseUpdatedAtRef.current = "";
+              baseBodyRef.current = "";
               replaceNoteUrl(null);
             }
             setSaveStateNow("saved");
@@ -1055,12 +1101,14 @@ export function AgentNoteApp({
               setBodyNow(nextBody);
               lastAckedBodyRef.current = nextBody;
               baseUpdatedAtRef.current = fallback.updated_at;
+              baseBodyRef.current = fallback.body;
               replaceNoteUrl(fallback.id);
             } else {
               setActiveId(null);
               setBodyNow("");
               lastAckedBodyRef.current = "";
               baseUpdatedAtRef.current = "";
+              baseBodyRef.current = "";
               replaceNoteUrl(null);
             }
             setSaveStateNow("saved");
@@ -1567,6 +1615,7 @@ export function AgentNoteApp({
           // advance the base so the next save is not a false conflict (#57).
           if (activeIdRef.current === note.id) {
             baseUpdatedAtRef.current = note.updated_at;
+            baseBodyRef.current = note.body;
           }
           syncPost.current({
             type: "upsert",

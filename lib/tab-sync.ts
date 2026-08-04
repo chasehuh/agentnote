@@ -11,10 +11,18 @@ export type SyncMessage =
       title: string;
       at: number;
       /**
-       * Server `updated_at` the drafting tab last acknowledged.
+       * Server generation (`updated_at`) the drafting tab's BUFFER is based
+       * on — `baseUpdatedAtRef`, never the poll-refreshed list row, which can
+       * advance past a stale dirty buffer and launder its drafts as current.
        * Receivers reject editor apply when this does not match local.
        */
       baseUpdatedAt?: string;
+      /**
+       * Fingerprint of the server body at `baseUpdatedAt` (bodyFingerprint).
+       * Receivers reject editor apply unless it matches their own base body,
+       * failing closed when absent (old bundles).
+       */
+      baseFingerprint?: string;
       /** Monotonic per-tab draft sequence for out-of-order ignore. */
       draftSeq?: number;
     }
