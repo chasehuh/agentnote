@@ -4,7 +4,6 @@ import {
   canApplyRemoteBody,
   isDraftBaseCurrent,
   isRemoteNoteNewer,
-  noteAfterConflictKeepLocalBuffer,
   shouldAcceptDraftSeq,
   shouldMarkSavedAfterPersist,
 } from "./remote-apply-guard";
@@ -102,27 +101,6 @@ describe("shouldAcceptDraftSeq", () => {
   });
 });
 
-describe("noteAfterConflictKeepLocalBuffer", () => {
-  it("rebases updated_at but keeps the local buffer/title", () => {
-    const server = {
-      id: "abc-defg-hij",
-      title: "server.md",
-      body: "long server body",
-      updated_at: "2026-07-30T12:05:00.000Z",
-      created_at: "2026-07-30T12:00:00.000Z",
-    };
-    const kept = noteAfterConflictKeepLocalBuffer(
-      server,
-      "local short",
-      "local.md",
-    );
-    expect(kept.body).toBe("local short");
-    expect(kept.title).toBe("local.md");
-    expect(kept.updated_at).toBe("2026-07-30T12:05:00.000Z");
-    expect(kept.id).toBe("abc-defg-hij");
-  });
-});
-
 describe("canAdvanceBaseWithoutAdopting", () => {
   const LONG = "a very long body written by the winning tab";
   const ACKED = "the body this buffer was opened from";
@@ -217,5 +195,45 @@ describe("persist concurrency token source (issue #57 regression guard)", () => 
     expect(source).not.toMatch(
       /const expectedUpdatedAt = notesRef\.current\.find\(/,
     );
+  });
+});
+
+describe("shorter-body clobber (0804 note wipe regression guard)", () => {
+  const readAppSource = () =>
+    import("node:fs").then((fs) =>
+      fs.readFileSync(
+        new URL("../components/agentnote-app.tsx", import.meta.url),
+        "utf8",
+      ),
+    );
+
+  it("409 handling never rebases the base token onto the conflict note", async () => {
+    const source = await readAppSource();
+    // The exact line that laundered a stale buffer into a valid ticket:
+    // one poll cycle after the winner paused, any re-send (keystroke, flush,
+    // Retry) silently overwrote 1680 chars with 503.
+    expect(source).not.toMatch(
+      /baseUpdatedAtRef\.current = conflictNote\.updated_at/,
+    );
+    expect(source).not.toContain("noteAfterConflictKeepLocalBuffer");
+  });
+
+  it("autosave arms only on buffer changes, never on list-row refreshes", async () => {
+    const source = await readAppSource();
+    // A poll/broadcast that replaces `activeNote` while the buffer is
+    // untouched must not turn an idle tab into a writer.
+    expect(source).toContain("if (body === lastArmedBodyRef.current) return;");
+  });
+
+  it("persists are serialized so overlapping PUTs cannot self-409", async () => {
+    const source = await readAppSource();
+    expect(source).toContain("const prior = persistInFlightRef.current;");
+    expect(source).toMatch(/if \(prior\) await prior/);
+  });
+
+  it("only explicit conflict actions may take a fresh token", async () => {
+    const source = await readAppSource();
+    expect(source).toContain("resolveConflictOverwrite");
+    expect(source).toContain("resolveConflictUseServer");
   });
 });

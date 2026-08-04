@@ -19,7 +19,6 @@ import {
   canApplyRemoteBody,
   isDraftBaseCurrent,
   isRemoteNoteNewer,
-  noteAfterConflictKeepLocalBuffer,
   shouldAcceptDraftSeq,
   shouldMarkSavedAfterPersist,
 } from "@/lib/remote-apply-guard";
@@ -242,6 +241,13 @@ export function AgentNoteApp({
   const baseUpdatedAtRef = useRef(
     resolveInitialNote(initialNotes, initialSelectedId)?.updated_at ?? "",
   );
+  /**
+   * Buffer value the autosave effect last processed. A poll/broadcast can
+   * replace `activeNote` while the buffer is untouched; only a buffer change
+   * may arm autosave — a row refresh must never turn an idle tab into a
+   * writer (0804 wipe: that auto-PUT is how the stale body kept winning).
+   */
+  const lastArmedBodyRef = useRef(body);
 
   activeIdRef.current = activeId;
   bodyRefState.current = body;
@@ -619,20 +625,16 @@ export function AgentNoteApp({
               return false;
             }
             if (conflictNote) {
-              // Rebase concurrency token; keep local buffer so autosave does not
-              // treat server body as the editor and auto-PUT the stale short text.
-              const kept = noteAfterConflictKeepLocalBuffer(
-                conflictNote,
-                bodyRefState.current,
-                deriveNoteTitle(bodyRefState.current),
-              ) as Note;
-              // Rebase the base generation too, so an explicit Retry can win.
-              // Deliberate: only a user action re-sends this buffer.
-              baseUpdatedAtRef.current = conflictNote.updated_at;
+              // Show the server's newer note in the list; the buffer keeps the
+              // local text. The base token deliberately does NOT advance: a
+              // rebase here hands the stale buffer a valid ticket, and any
+              // follow-up save silently overwrites the newer body (0804 wipe).
+              // Only the explicit conflict actions may take a fresh token.
+              const server = conflictNote;
               setNotes((prev) =>
                 sortNotesByRecent([
-                  kept,
-                  ...prev.filter((note) => note.id !== kept.id),
+                  server,
+                  ...prev.filter((note) => note.id !== server.id),
                 ]),
               );
             }
@@ -702,7 +704,15 @@ export function AgentNoteApp({
         }
       };
 
-      const promise = run();
+      // Serialize persists. Overlapping PUTs carry the same token, so the
+      // loser 409s against our own just-landed write and the tab enters the
+      // conflict state with no real conflict (0804 RCA: this self-409 is what
+      // put a healthy single tab on the stale-buffer path).
+      const prior = persistInFlightRef.current;
+      const promise = (async () => {
+        if (prior) await prior.catch(() => false);
+        return run();
+      })();
       persistInFlightRef.current = promise;
       try {
         return await promise;
@@ -729,6 +739,55 @@ export function AgentNoteApp({
     clearSaveRetry();
     void persist(id, bodyRefState.current);
   }, [clearSaveRetry, docFlush, persist]);
+
+  /**
+   * Explicit conflict resolution — the ONLY paths that may hand a diverged
+   * buffer a fresh concurrency token (0804 wipe: a silent rebase on 409 let
+   * a stale short buffer overwrite the newer body with no user decision).
+   */
+  const resolveConflictOverwrite = useCallback(async () => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    clearSaveRetry();
+    try {
+      const response = await fetch(`/api/notes/${id}`, { cache: "no-store" });
+      if (!response.ok) return;
+      const data = (await response.json()) as { note: Note };
+      if (activeIdRef.current !== id) return;
+      // The user chose to overwrite the server version with this buffer.
+      baseUpdatedAtRef.current = data.note.updated_at;
+    } catch {
+      return;
+    }
+    void persist(id, bodyRefState.current);
+  }, [clearSaveRetry, persist]);
+
+  const resolveConflictUseServer = useCallback(async () => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    clearSaveRetry();
+    try {
+      const response = await fetch(`/api/notes/${id}`, { cache: "no-store" });
+      if (!response.ok) return;
+      const data = (await response.json()) as { note: Note };
+      if (activeIdRef.current !== id) return;
+      const nextBody = substituteAsciiArrows(data.note.body).text;
+      skipNextSave.current = true;
+      setBodyNow(nextBody);
+      lastAckedBodyRef.current = nextBody;
+      baseUpdatedAtRef.current = data.note.updated_at;
+      setNotes((prev) =>
+        sortNotesByRecent([
+          data.note,
+          ...prev.filter((note) => note.id !== data.note.id),
+        ]),
+      );
+      setSaveErrorKind(null);
+      setSaveStateNow("saved");
+    } catch {
+      // Keep the conflict banner; the user can pick an action again.
+    }
+  }, [clearSaveRetry, setBodyNow, setSaveStateNow]);
 
   const flushPendingSave = useCallback(async () => {
     if (CRDT_ENABLED) {
@@ -832,8 +891,11 @@ export function AgentNoteApp({
     if (CRDT_ENABLED) return;
     if (skipNextSave.current) {
       skipNextSave.current = false;
+      lastArmedBodyRef.current = body;
       return;
     }
+    if (body === lastArmedBodyRef.current) return;
+    lastArmedBodyRef.current = body;
     if (activeNote && activeNote.body === body) return;
 
     clearSaveRetry();
@@ -1177,7 +1239,7 @@ export function AgentNoteApp({
     : displaySaveErrorKind === "auth"
       ? "Session expired — sign in again to save"
       : displaySaveErrorKind === "conflict"
-        ? "Another tab saved this note — Retry overwrites with your version"
+        ? "Another tab or device saved a newer version of this note"
         : "Latest changes are not saved";
 
   // Browser tab: page title only (Notion-style). Shell stays "agentnote".
@@ -1251,6 +1313,25 @@ export function AgentNoteApp({
               <a className="zed-save-error__action" href="/login">
                 Sign in
               </a>
+            ) : displaySaveErrorKind === "conflict" ? (
+              <>
+                <button
+                  type="button"
+                  className="zed-save-error__action"
+                  onClick={() => void resolveConflictUseServer()}
+                  title="Discard this buffer and load the newer server version"
+                >
+                  Use server
+                </button>
+                <button
+                  type="button"
+                  className="zed-save-error__action"
+                  onClick={() => void resolveConflictOverwrite()}
+                  title="Replace the newer server version with this buffer"
+                >
+                  Overwrite
+                </button>
+              </>
             ) : (
               <button
                 type="button"

@@ -58,12 +58,17 @@ export async function PUT(request: Request, { params }: Params) {
       );
     }
 
+    // Fail closed: `body ?? ""` would let a body-less PUT blank the note.
+    if (typeof payload.body !== "string") {
+      return NextResponse.json(
+        { error: "body is required" },
+        { status: 400 },
+      );
+    }
+
     // A CRDT-backed body is owned by the Yjs doc. A whole-document PUT would
     // LWW-clobber the projection, so refuse it with a machine-readable reason.
-    if (
-      typeof payload.body === "string" &&
-      (await isCrdtManagedNote(authResult.userId, id))
-    ) {
+    if (await isCrdtManagedNote(authResult.userId, id)) {
       const note = await getNote(authResult.userId, id);
       if (!note) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -76,7 +81,7 @@ export async function PUT(request: Request, { params }: Params) {
 
     const result = await updateNote(authResult.userId, id, {
       title: payload.title ?? "",
-      body: payload.body ?? "",
+      body: payload.body,
       expectedUpdatedAt,
     });
 
