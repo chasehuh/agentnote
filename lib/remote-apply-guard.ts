@@ -97,6 +97,23 @@ export function isDraftBaseCurrent(
 }
 
 /**
+ * Peer draft content gate: the sender proves which server body its buffer
+ * generation is based on (see lib/body-fingerprint.ts). A generation token
+ * alone can be laundered — a tab whose list row advanced while its buffer
+ * stayed stale broadcasts current-looking drafts over old content, and a
+ * clean peer that adopts them PUTs the stale lineage with a valid token
+ * (post-#73 0804 clobber). Missing fingerprint fails closed so old bundles
+ * cannot keep laundering after this ships.
+ */
+export function isDraftBaseContentCurrent(
+  localBaseFingerprint: string,
+  draftBaseFingerprint: string | undefined,
+): boolean {
+  if (!draftBaseFingerprint) return false;
+  return draftBaseFingerprint === localBaseFingerprint;
+}
+
+/**
  * Ignore out-of-order draft broadcasts from the same peer tab.
  * Returns true when this `draftSeq` should be applied (and remembered).
  */

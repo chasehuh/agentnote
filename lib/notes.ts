@@ -1,5 +1,6 @@
 import { ARCHIVE_RETENTION_DAYS } from "./archive";
 import { normalizeAuthorHandle } from "./author-handle";
+import { bodyFingerprint } from "./body-fingerprint";
 import { query } from "./db";
 import { createNoteId, normalizeNoteId } from "./note-id";
 import { normalizePublicId } from "./public-id";
@@ -312,6 +313,14 @@ export type UpdateNoteInput = {
    * concurrency — stale writers must not LWW-clobber a newer body.
    */
   expectedUpdatedAt: string;
+  /**
+   * Fingerprint of the server body the client's buffer is based on
+   * (lib/body-fingerprint.ts). When present it must match the current body:
+   * a token proves a generation timestamp, but client-side races can launder
+   * a current token onto a stale buffer (post-#73 0804 clobber via
+   * BroadcastChannel drafts). Optional so pre-fingerprint bundles keep saving.
+   */
+  baseFingerprint?: string;
 };
 
 export type UpdateNoteResult =
@@ -338,6 +347,18 @@ export async function updateNote(
     const current = await getNote(userId, canonicalId);
     if (!current) return { status: "not_found" };
     return { status: "conflict", note: current };
+  }
+
+  // Content check for the token: the body being replaced must be the one the
+  // client's buffer is based on. Not racy despite the separate read — every
+  // body write also bumps `updated_at`, so a write landing after this read
+  // fails the token gate inside the UPDATE below.
+  if (input.baseFingerprint) {
+    const current = await getNote(userId, canonicalId);
+    if (!current) return { status: "not_found" };
+    if (bodyFingerprint(current.body) !== input.baseFingerprint) {
+      return { status: "conflict", note: current };
+    }
   }
 
   // Capture the pre-update body in the same statement as the overwrite so a

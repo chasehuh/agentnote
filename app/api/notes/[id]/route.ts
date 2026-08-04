@@ -44,6 +44,7 @@ export async function PUT(request: Request, { params }: Params) {
       title?: string;
       body?: string;
       expected_updated_at?: string;
+      base_fingerprint?: string;
     };
 
     const expectedUpdatedAt =
@@ -83,6 +84,11 @@ export async function PUT(request: Request, { params }: Params) {
       title: payload.title ?? "",
       body: payload.body,
       expectedUpdatedAt,
+      baseFingerprint:
+        typeof payload.base_fingerprint === "string" &&
+        payload.base_fingerprint.trim()
+          ? payload.base_fingerprint.trim()
+          : undefined,
     });
 
     if (result.status === "not_found") {
