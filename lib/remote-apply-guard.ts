@@ -108,21 +108,3 @@ export function shouldAcceptDraftSeq(
   if (previousSeq == null) return true;
   return nextSeq > previousSeq;
 }
-
-/**
- * On 409 Conflict: rebase the list row's concurrency token to the server's
- * `updated_at` while keeping the local buffer/title so autosave does not see
- * a false body mismatch and auto-PUT the stale short body (issue #57).
- */
-export function noteAfterConflictKeepLocalBuffer(
-  serverNote: { id: string; updated_at: string } & Record<string, unknown>,
-  localBody: string,
-  localTitle: string,
-) {
-  return {
-    ...serverNote,
-    body: localBody,
-    title: localTitle,
-    updated_at: serverNote.updated_at,
-  };
-}

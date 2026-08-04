@@ -6,6 +6,7 @@ vi.mock("./db", () => ({
 
 import { query } from "./db";
 import {
+  isDestructiveBodyOverwrite,
   listNoteRevisions,
   purgeExpiredNoteRevisions,
   shouldRecordBodyRevision,
@@ -46,6 +47,28 @@ describe("shouldRecordBodyRevision", () => {
 
   it("skips when body is identical", () => {
     expect(shouldRecordBodyRevision("same", "same")).toBe(false);
+  });
+});
+
+describe("isDestructiveBodyOverwrite", () => {
+  it("flags the 0804 incident shape (1680 chars replaced by 503)", () => {
+    expect(isDestructiveBodyOverwrite("x".repeat(1680), "y".repeat(503))).toBe(
+      true,
+    );
+  });
+
+  it("ignores growth and ordinary edits", () => {
+    expect(isDestructiveBodyOverwrite("short", "short plus more")).toBe(false);
+    expect(
+      isDestructiveBodyOverwrite("x".repeat(1000), "y".repeat(900)),
+    ).toBe(false);
+    // Exactly half is not destructive; less than half is.
+    expect(isDestructiveBodyOverwrite("x".repeat(100), "y".repeat(50))).toBe(
+      false,
+    );
+    expect(isDestructiveBodyOverwrite("x".repeat(100), "y".repeat(49))).toBe(
+      true,
+    );
   });
 });
 
@@ -90,6 +113,31 @@ describe("updateNote revisions", () => {
       "old body",
       NOTE_REVISION_COALESCE_SECONDS,
     ]);
+  });
+
+  it("bypasses coalescing when the overwrite is destructive", async () => {
+    // 0804 wipe: the 1680-char pre-image was swallowed because a revision
+    // existed within the 60s window. A destructive overwrite must always
+    // leave a recovery row.
+    const longBody = "x".repeat(1680);
+    mockedQuery
+      .mockResolvedValueOnce({ rows: [{ id: "abc-defg-hij" }], rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [noteRow({ body: "y".repeat(503), prev_body: longBody })],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    await updateNote("user_1", "abc-defg-hij", {
+      title: "0804.md",
+      body: "y".repeat(503),
+      expectedUpdatedAt: BASE_UPDATED_AT,
+    });
+
+    const revisionParams = mockedQuery.mock.calls[2]?.[1] as unknown[];
+    expect(revisionParams?.[3]).toBe(longBody);
+    // Coalesce window collapses to 0 seconds -> the insert always happens.
+    expect(revisionParams?.[4]).toBe(0);
   });
 
   it("does not write a revision when the body is unchanged", async () => {

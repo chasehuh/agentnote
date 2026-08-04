@@ -113,6 +113,18 @@ export function shouldRecordBodyRevision(
 }
 
 /**
+ * A write that replaces a body with one less than half its length. These are
+ * exactly the pre-images worth keeping regardless of burst coalescing — the
+ * 0804 wipe (1680 -> 503 chars) lost its recovery row to the 60s window.
+ */
+export function isDestructiveBodyOverwrite(
+  previousBody: string,
+  nextBody: string,
+): boolean {
+  return nextBody.length < previousBody.length / 2;
+}
+
+/**
  * Best-effort insert of the body about to be replaced.
  * Coalesces bursts; never throws to the caller.
  * Also used by the CRDT projection write (see lib/crdt/note-doc-store.ts).
@@ -122,6 +134,8 @@ export async function recordPreviousBodyRevision(input: {
   userId: string;
   title: string;
   body: string;
+  /** Set 0 to always record (destructive overwrites must stay recoverable). */
+  coalesceSeconds?: number;
 }): Promise<void> {
   try {
     await query(
@@ -138,7 +152,7 @@ export async function recordPreviousBodyRevision(input: {
         input.userId,
         input.title,
         input.body,
-        NOTE_REVISION_COALESCE_SECONDS,
+        input.coalesceSeconds ?? NOTE_REVISION_COALESCE_SECONDS,
       ],
     );
   } catch (error) {
@@ -372,6 +386,9 @@ export async function updateNote(
       userId,
       title: row.prev_title,
       body: row.prev_body,
+      coalesceSeconds: isDestructiveBodyOverwrite(row.prev_body, input.body)
+        ? 0
+        : undefined,
     });
   }
 

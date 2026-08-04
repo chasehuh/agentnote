@@ -241,4 +241,14 @@ describe("PUT /api/notes/[id] with a CRDT-backed body", () => {
     expect(response.status).toBe(400);
     expect(isCrdtManagedNote).not.toHaveBeenCalled();
   });
+
+  it("rejects a body-less PUT instead of blanking the note", async () => {
+    const response = await putNote(
+      putRequest({ title: "t", expected_updated_at: UPDATED_AT }),
+      params(),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "body is required" });
+    expect(updateNote).not.toHaveBeenCalled();
+  });
 });
