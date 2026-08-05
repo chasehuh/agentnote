@@ -10,6 +10,7 @@ import {
 } from "@/lib/crdt/use-note-doc";
 import { crdtSyncChrome } from "@/lib/crdt/sync-chrome";
 import { deriveNoteTitle } from "@/lib/note-title";
+import { allTags, noteHasTag } from "@/lib/tags";
 import {
   DEFAULT_WRAP,
   WRAP_STORAGE_KEY,
@@ -206,6 +207,8 @@ export function AgentNoteApp({
     null,
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  /** Active `#tag` sidebar filter. Null = show everything. */
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [themeId, setThemeId] = useState<ThemeId>(DEFAULT_THEME_ID);
@@ -545,7 +548,14 @@ export function AgentNoteApp({
     window.localStorage.setItem(WRAP_STORAGE_KEY, String(next));
   }, []);
 
-  const sortedNotes = useMemo(() => sortNotesByRecent(notes), [notes]);
+  const sortedNotes = useMemo(() => {
+    const ordered = sortNotesByRecent(notes);
+    if (!tagFilter) return ordered;
+    return ordered.filter((note) => noteHasTag(note.body, tagFilter));
+  }, [notes, tagFilter]);
+
+  /** Scanning every body is not free — recompute only when the notes change. */
+  const availableTags = useMemo(() => allTags(notes), [notes]);
 
   const activeNote = useMemo(
     () => notes.find((note) => note.id === activeId) ?? null,
@@ -930,6 +940,20 @@ export function AgentNoteApp({
     };
   }, [selectNote]);
 
+  // Clicking a `#tag` in the editor filters the sidebar (lib/editor/tags.ts).
+  useEffect(() => {
+    function onSelectTag(event: Event) {
+      const tag = (event as CustomEvent<{ tag?: string }>).detail?.tag;
+      if (!tag) return;
+      setTagFilter((prev) => (prev === tag ? null : tag));
+      setSidebarOpen(true);
+    }
+    window.addEventListener("agentnote:select-tag", onSelectTag);
+    return () => {
+      window.removeEventListener("agentnote:select-tag", onSelectTag);
+    };
+  }, []);
+
   useEffect(() => {
     if (!activeId) return;
     // CRDT path persists through the doc sync loop, not a whole-document PUT.
@@ -1153,21 +1177,57 @@ export function AgentNoteApp({
     setSaveStateNow,
   ]);
 
+  /**
+   * Create a note and register it locally, without touching the active note.
+   * Shared by ⌘N (which then navigates) and the editor's `[[` / `/` sub-note
+   * flow (which must NOT navigate — the user is mid-sentence in the parent).
+   */
+  const createNoteRow = useCallback(
+    async (input?: { body?: string }): Promise<Note | null> => {
+      const response = await fetch("/api/notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: input?.body ?? "" }),
+      });
+      if (!response.ok) return null;
+      const data = (await response.json()) as { note: Note };
+      setNotes((prev) => sortNotesByRecent([data.note, ...prev]));
+      syncPost.current({
+        type: "upsert",
+        sourceId: tabId.current,
+        note: data.note,
+      });
+      return data.note;
+    },
+    [],
+  );
+
   const createNote = useCallback(async () => {
     const ok = await ensureSafeToLeaveActive();
     if (!ok) return;
-    const response = await fetch("/api/notes", { method: "POST" });
-    if (!response.ok) return;
-    const data = (await response.json()) as { note: Note };
-    setNotes((prev) => sortNotesByRecent([data.note, ...prev]));
-    syncPost.current({
-      type: "upsert",
-      sourceId: tabId.current,
-      note: data.note,
-    });
-    await selectNote(data.note, { skipFlush: true });
+    const note = await createNoteRow();
+    if (!note) return;
+    await selectNote(note, { skipFlush: true });
     if (!isNarrowViewport()) setSidebarOpen(true);
-  }, [ensureSafeToLeaveActive, selectNote]);
+  }, [createNoteRow, ensureSafeToLeaveActive, selectNote]);
+
+  /** `[[` / `/` wiring handed to CodeMirror. Reads live state on each keystroke. */
+  const noteLinkOptions = useMemo(
+    () => ({
+      candidates: () =>
+        notesRef.current.map((note) => ({
+          id: note.id,
+          title: previewTitle(note),
+        })),
+      createNote: async (title: string) => {
+        const note = await createNoteRow({ body: title });
+        return note ? { id: note.id, title: previewTitle(note) } : null;
+      },
+    }),
+    [createNoteRow],
+  );
+
+  const knownTags = useMemo(() => () => allTags(notesRef.current), []);
 
   function requestArchive(note: Note) {
     setPendingArchive(note);
@@ -1447,9 +1507,32 @@ export function AgentNoteApp({
               </button>
             </div>
           </div>
+          {availableTags.length > 0 ? (
+            <div className="zed-panel__tags">
+              {availableTags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  className="zed-tag-chip"
+                  data-active={tag === tagFilter ? "true" : undefined}
+                  aria-pressed={tag === tagFilter}
+                  onClick={() =>
+                    setTagFilter((prev) => (prev === tag ? null : tag))
+                  }
+                  title={
+                    tag === tagFilter ? `Clear #${tag} filter` : `Filter #${tag}`
+                  }
+                >
+                  #{tag}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <nav className="zed-panel__list">
             {sortedNotes.length === 0 ? (
-              <p className="zed-panel__empty">No notes yet</p>
+              <p className="zed-panel__empty">
+                {tagFilter ? `No notes tagged #${tagFilter}` : "No notes yet"}
+              </p>
             ) : (
               sortedNotes.map((note) => {
                 const active = note.id === activeId;
@@ -1568,6 +1651,8 @@ export function AgentNoteApp({
                       ytext={docSession.ytext}
                       awareness={docSession.awareness}
                       wrap={wrap}
+                      noteLinks={noteLinkOptions}
+                      knownTags={knownTags}
                       autoFocus
                     />
                   ) : (
@@ -1587,6 +1672,8 @@ export function AgentNoteApp({
                     wrap={wrap}
                     onChange={setBodyNow}
                     onExternalReconcile={reconcileBodyFromEditor}
+                    noteLinks={noteLinkOptions}
+                    knownTags={knownTags}
                     autoFocus
                   />
                 )}
