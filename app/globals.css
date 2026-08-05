@@ -631,8 +631,33 @@ a.zed-save-error__action {
   align-items: stretch;
   gap: 4px;
   width: 100%;
-  padding: 10px 28px 10px 12px;
+  /* Sub-note indent (Zed project panel). `--depth` is set per row; the
+     18px gutter leaves room for the disclosure chevron at every level. */
+  padding: 10px 28px 10px calc(18px + var(--depth, 0) * 12px);
   text-align: left;
+}
+
+.zed-note-item__chevron {
+  position: absolute;
+  top: 11px;
+  left: calc(2px + var(--depth, 0) * 12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  color: var(--c-text-placeholder);
+  transition: transform 100ms ease;
+}
+
+.zed-note-item__chevron[data-expanded="true"] {
+  transform: rotate(90deg);
+}
+
+.zed-note-item__chevron:hover {
+  background: var(--c-element-hover);
+  color: var(--c-text);
 }
 
 .zed-note-item__title {
@@ -1148,6 +1173,8 @@ a.zed-save-error__action {
 }
 
 .zed-panel__archived-list .zed-note-item__hit {
+  /* Archived is a flat list — no chevron gutter to reserve. */
+  padding-left: 12px;
   padding-right: 96px;
 }
 

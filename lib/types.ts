@@ -9,6 +9,12 @@ export type Note = {
    * Non-null = Archived (Recently Deleted); purged after retention.
    */
   deleted_at: string | null;
+  /**
+   * Owning note. Set only when this note was CREATED from inside another note
+   * (`[[` create / `/` New note); null = root. A Markdown link to a note never
+   * sets this — hierarchy is a create-time edge, not a parse of the body.
+   */
+  parent_id: string | null;
   /** True when a public `/p/...` link is live. */
   is_public: boolean;
   /**

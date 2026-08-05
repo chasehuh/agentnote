@@ -189,6 +189,20 @@ export async function ensureSchema() {
         WHERE deleted_at IS NOT NULL;
       `);
 
+      // True sub-notes: a note created from INSIDE another note is owned by it.
+      // Peer hyperlinks in a body never create this edge (see #77 / #79 / #80).
+      // SET NULL, not CASCADE: deleting a parent promotes its children to root
+      // rather than silently taking a subtree the user never selected.
+      await pool.query(`
+        ALTER TABLE notes
+          ADD COLUMN IF NOT EXISTS parent_id TEXT
+          REFERENCES notes(id) ON UPDATE CASCADE ON DELETE SET NULL;
+      `);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS notes_user_parent_idx
+        ON notes (user_id, parent_id);
+      `);
+
       // Body revision trail — previous body before overwrite (see README recovery).
       // ON DELETE CASCADE: permanent delete / archive purge also drops revisions.
       await pool.query(`

@@ -38,6 +38,28 @@ export function PlusIcon({ size = 14, className }: IconProps) {
   );
 }
 
+/** `chevron_right.svg` — project-panel disclosure; rotated when expanded. */
+export function ChevronRightIcon({ size = 12, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <path
+        d="M6 3.5L10.5 8L6 12.5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /**
  * `threads_sidebar_left_closed.svg` — used in Zed status bar to open the
  * workspace/threads sidebar (`IconName::ThreadsSidebarLeftClosed`).
