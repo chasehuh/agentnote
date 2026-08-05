@@ -1,7 +1,14 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import type { Note } from "@/lib/types";
 import { substituteAsciiArrows } from "@/lib/arrows";
 import {
@@ -10,11 +17,19 @@ import {
 } from "@/lib/crdt/use-note-doc";
 import { crdtSyncChrome } from "@/lib/crdt/sync-chrome";
 import { deriveNoteTitle } from "@/lib/note-title";
+import {
+  ancestorIds,
+  collapsibleIds,
+  flattenNoteTree,
+  type NoteTreeRow,
+} from "@/lib/note-tree";
 import { allTags, noteHasTag } from "@/lib/tags";
 import {
   DEFAULT_WRAP,
+  TREE_COLLAPSED_STORAGE_KEY,
   WRAP_STORAGE_KEY,
   isWrapPreference,
+  parseCollapsedIds,
 } from "@/lib/preferences";
 import { bodyFingerprint } from "@/lib/body-fingerprint";
 import {
@@ -55,6 +70,7 @@ import { AccountMenu } from "./account-menu";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import { ConfirmDialog } from "./confirm-dialog";
 import {
+  ChevronRightIcon,
   PlusIcon,
   SidebarLeftClosedIcon,
   SidebarLeftOpenIcon,
@@ -209,6 +225,14 @@ export function AgentNoteApp({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** Active `#tag` sidebar filter. Null = show everything. */
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  /**
+   * Note-tree rows whose children are hidden. Collapsed rather than expanded
+   * ids so a note nobody has touched — including one just created — defaults to
+   * visible under its parent.
+   */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [themeId, setThemeId] = useState<ThemeId>(DEFAULT_THEME_ID);
@@ -235,6 +259,7 @@ export function AgentNoteApp({
   const draftSeqRef = useRef(0);
   const lastDraftSeqByPeer = useRef(new Map<string, number>());
   const activeIdRef = useRef(activeId);
+  const collapsedRef = useRef<ReadonlySet<string>>(collapsed);
   const bodyRefState = useRef(body);
   const saveStateRef = useRef(saveState);
   const notesRef = useRef(notes);
@@ -523,7 +548,41 @@ export function AgentNoteApp({
     setAppearance(nextAppearance);
     setWrap(savedWrap ?? DEFAULT_WRAP);
     applyTheme(nextTheme, nextAppearance);
+    const restored = new Set(
+      parseCollapsedIds(window.localStorage.getItem(TREE_COLLAPSED_STORAGE_KEY)),
+    );
+    collapsedRef.current = restored;
+    setCollapsed(restored);
   }, []);
+
+  /**
+   * Apply and persist a collapsed-set change. Reads through a ref so the
+   * localStorage write stays out of the state updater.
+   */
+  const applyCollapsed = useCallback(
+    (next: (prev: ReadonlySet<string>) => ReadonlySet<string>) => {
+      const value = next(collapsedRef.current);
+      if (value === collapsedRef.current) return;
+      collapsedRef.current = value;
+      setCollapsed(value);
+      window.localStorage.setItem(
+        TREE_COLLAPSED_STORAGE_KEY,
+        JSON.stringify([...value]),
+      );
+    },
+    [],
+  );
+
+  const toggleCollapsed = useCallback(
+    (id: string) => {
+      applyCollapsed((prev) => {
+        const next = new Set(prev);
+        if (!next.delete(id)) next.add(id);
+        return next;
+      });
+    },
+    [applyCollapsed],
+  );
 
   const selectTheme = useCallback(
     (id: ThemeId) => {
@@ -548,11 +607,26 @@ export function AgentNoteApp({
     window.localStorage.setItem(WRAP_STORAGE_KEY, String(next));
   }, []);
 
-  const sortedNotes = useMemo(() => {
-    const ordered = sortNotesByRecent(notes);
-    if (!tagFilter) return ordered;
-    return ordered.filter((note) => noteHasTag(note.body, tagFilter));
-  }, [notes, tagFilter]);
+  /**
+   * Sidebar rows in render order.
+   *
+   * A `#tag` filter renders FLAT on purpose: a filter is a search view, and
+   * nesting matches under parents the filter excluded would draw structure the
+   * result set does not have.
+   */
+  const sidebarRows = useMemo<NoteTreeRow[]>(() => {
+    if (tagFilter) {
+      return sortNotesByRecent(notes)
+        .filter((note) => noteHasTag(note.body, tagFilter))
+        .map((note) => ({
+          note,
+          depth: 0,
+          hasChildren: false,
+          expanded: false,
+        }));
+    }
+    return flattenNoteTree(notes, collapsed);
+  }, [notes, tagFilter, collapsed]);
 
   /** Scanning every body is not free — recompute only when the notes change. */
   const availableTags = useMemo(() => allTags(notes), [notes]);
@@ -1183,11 +1257,18 @@ export function AgentNoteApp({
    * flow (which must NOT navigate — the user is mid-sentence in the parent).
    */
   const createNoteRow = useCallback(
-    async (input?: { body?: string }): Promise<Note | null> => {
+    async (input?: {
+      body?: string;
+      /** Owning note for a true sub-note. Omit for a root note (⌘N / `+`). */
+      parentId?: string | null;
+    }): Promise<Note | null> => {
       const response = await fetch("/api/notes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: input?.body ?? "" }),
+        body: JSON.stringify({
+          body: input?.body ?? "",
+          ...(input?.parentId ? { parent_id: input.parentId } : {}),
+        }),
       });
       if (!response.ok) return null;
       const data = (await response.json()) as { note: Note };
@@ -1219,8 +1300,24 @@ export function AgentNoteApp({
           id: note.id,
           title: previewTitle(note),
         })),
+      /**
+       * Create-from-inside — the ONLY gesture that nests. Picking an existing
+       * note goes through `linkCompletion` and never reaches here, so a link
+       * stays a peer hyperlink (see #80).
+       *
+       * The parent is sent only when the active note is still in the live list:
+       * a note archived in another tab would 400 the create and cost the user
+       * the text they were typing.
+       */
       createNote: async (title: string) => {
-        const note = await createNoteRow({ body: title });
+        const parentId = activeIdRef.current;
+        const parentIsLive =
+          parentId != null &&
+          notesRef.current.some((note) => note.id === parentId);
+        const note = await createNoteRow({
+          body: title,
+          parentId: parentIsLive ? parentId : null,
+        });
         return note ? { id: note.id, title: previewTitle(note) } : null;
       },
     }),
@@ -1360,12 +1457,40 @@ export function AgentNoteApp({
     document.title = tabTitle;
   }, [tabTitle]);
 
+  // Zed `project_panel.auto_reveal_entries`: selecting a nested note opens the
+  // path down to it, so the active row is never hidden inside a collapsed parent.
+  useEffect(() => {
+    if (!activeId) return;
+    const ancestors = ancestorIds(notesRef.current, activeId);
+    if (ancestors.length === 0) return;
+    applyCollapsed((prev) => {
+      if (!ancestors.some((id) => prev.has(id))) return prev;
+      const next = new Set(prev);
+      for (const id of ancestors) next.delete(id);
+      return next;
+    });
+  }, [activeId, notes, applyCollapsed]);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const meta = event.metaKey || event.ctrlKey;
       if (meta && event.key.toLowerCase() === "n") {
         event.preventDefault();
         void createNote();
+      }
+      // Zed's `cmd-left` / `cmd-right`: collapse or expand the whole tree.
+      // Scoped to a focused sidebar row on purpose — this listener is on
+      // `window`, and ⌘← / ⌘→ are line-boundary motions in the editor, so an
+      // unscoped binding would swallow them the way plain ⌘B once did.
+      const inPanel =
+        event.target instanceof Element && event.target.closest(".zed-panel");
+      if (meta && inPanel && event.key === "ArrowLeft") {
+        event.preventDefault();
+        applyCollapsed(() => new Set(collapsibleIds(notesRef.current)));
+      }
+      if (meta && inPanel && event.key === "ArrowRight") {
+        event.preventDefault();
+        applyCollapsed(() => new Set());
       }
       // Plain ⌘B is Markdown bold in the editor (lib/editor/bold.ts). This
       // listener must not match it at all: it sits on `window`, so a
@@ -1381,7 +1506,7 @@ export function AgentNoteApp({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createNote]);
+  }, [createNote, applyCollapsed]);
 
   return (
     <div className="zed-shell">
@@ -1529,12 +1654,12 @@ export function AgentNoteApp({
             </div>
           ) : null}
           <nav className="zed-panel__list">
-            {sortedNotes.length === 0 ? (
+            {sidebarRows.length === 0 ? (
               <p className="zed-panel__empty">
                 {tagFilter ? `No notes tagged #${tagFilter}` : "No notes yet"}
               </p>
             ) : (
-              sortedNotes.map((note) => {
+              sidebarRows.map(({ note, depth, hasChildren, expanded }) => {
                 const active = note.id === activeId;
                 const label =
                   note.id === activeId
@@ -1558,11 +1683,24 @@ export function AgentNoteApp({
                     key={note.id}
                     className="zed-note-item"
                     data-active={active}
+                    style={{ "--depth": depth } as CSSProperties}
                   >
                     <button
                       type="button"
                       className="zed-note-item__hit"
                       onClick={() => void selectNote(note)}
+                      // Zed project-panel arrows: → opens a row, ← closes it.
+                      onKeyDown={(event) => {
+                        if (!hasChildren) return;
+                        if (event.key === "ArrowRight" && !expanded) {
+                          event.preventDefault();
+                          toggleCollapsed(note.id);
+                        }
+                        if (event.key === "ArrowLeft" && expanded) {
+                          event.preventDefault();
+                          toggleCollapsed(note.id);
+                        }
+                      }}
                     >
                       <span
                         className="zed-note-item__title"
@@ -1572,6 +1710,26 @@ export function AgentNoteApp({
                       </span>
                       <span className="zed-note-item__date">{updatedLabel}</span>
                     </button>
+                    {hasChildren ? (
+                      <button
+                        type="button"
+                        className="zed-note-item__chevron"
+                        data-expanded={expanded ? "true" : undefined}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleCollapsed(note.id);
+                        }}
+                        aria-expanded={expanded}
+                        aria-label={
+                          expanded ? "Collapse sub-notes" : "Expand sub-notes"
+                        }
+                        title={
+                          expanded ? "Collapse sub-notes" : "Expand sub-notes"
+                        }
+                      >
+                        <ChevronRightIcon size={12} />
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="zed-note-item__delete"

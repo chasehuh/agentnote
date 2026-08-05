@@ -56,22 +56,36 @@ Open [http://localhost:3000](http://localhost:3000) and sign in with GitHub.
 | `⌘B` / `Ctrl+B` | Toggle `**bold**` around the selection (empty caret inserts `****`) |
 | `⇧⌘X` | Toggle `~~strikethrough~~` |
 | `⌘⇧B` / `Ctrl+Shift+B`, `⌘\` | Show / hide the notes sidebar |
-| `⌘N` | New note |
+| `⌘N` | New note (always at the top level) |
 | `⌘⌫` | Delete to hard line start |
 | `⇧⌘K` | Delete the line |
+| `→` / `←` (on a sidebar note) | Expand / collapse its sub-notes |
+| `⌘→` / `⌘←` (in the sidebar) | Expand / collapse the whole note tree. Sidebar-scoped, so `⌘←` / `⌘→` keep their line-boundary meaning in the editor. |
 
 ### Sub-notes, wiki links, and tags
 
-Notes link to each other as an Obsidian/Notion-style graph. A "sub-note" is an ordinary note row — there is no nested hierarchy, no folders — referenced from any body by a plain Markdown deep link.
+Notes link to each other as an Obsidian/Notion-style graph, and the sidebar renders them as a tree in the spirit of [Zed's project panel](https://zed.dev/docs/preview/project-panel).
+
+**Creating from inside a note nests it; linking does not.** This is the whole rule:
+
+| Action | Result |
+| --- | --- |
+| **Create** from inside a note — `[[Name` → `Create "…"`, or `/` → **New note** with a title | A true **sub-note**: an ordinary note row whose `parent_id` is the note you were writing in. It appears indented under that note in the sidebar, and its link is inserted at your caret. |
+| **Link** to an existing note — picking one in `[[`, or `/` → **Link to note** | A peer hyperlink only. Inserts `[Title](/n/{id})` and changes no parentage on either note. |
+| `⌘N` / the sidebar `+` | A root note. |
+
+So a body full of `/n/…` links implies no hierarchy at all — the tree comes from where a note was *created*, never from parsing text.
 
 | Type | Result |
 | --- | --- |
 | `[[` | Note picker. Filters your notes as you type; `Enter` inserts `[Title](/n/{id})`. |
-| `[[` + a name that matches nothing | `Create "…"` — creates the note **and** inserts its link, without leaving the note you are writing. |
+| `[[` + a name that matches nothing | `Create "…"` — creates the sub-note **and** inserts its link, without leaving the note you are writing. |
 | `/` (line start or after a space) | Command palette: **New note**, **Link to note**. The word after `/` is the argument, so `/groceries` → New note creates "groceries". |
 | `#` | Completes from tags already used across your notes. |
 
-**`[[` is a trigger, never a storage format.** Only standard Markdown is written to the body, so publishing, `note_revisions`, and CRDT sync need no knowledge of any of it. Existing `[label](/n/{id})` links keep working unchanged.
+**`[[` is a trigger, never a storage format.** Only standard Markdown is written to the body, so publishing, `note_revisions`, and CRDT sync need no knowledge of any of it. Existing `[label](/n/{id})` links keep working unchanged. Hierarchy lives in the `notes.parent_id` column, not in the note body, so it is likewise invisible to the CRDT.
+
+Archiving a parent does not archive or hide its children — they move up to the top level of the sidebar and re-nest when the parent is restored. Permanently deleting a parent promotes its children to the top level (`ON DELETE SET NULL`) rather than deleting them. While a `#tag` filter is active the sidebar is a flat result list, since nesting matches under parents the filter excluded would draw structure the results do not have.
 
 Because the link label is a snapshot of the title at insertion time, renaming a note does not rewrite links that point at it (Notion's behavior, not Obsidian's rename-refactor).
 

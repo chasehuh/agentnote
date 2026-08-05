@@ -33,6 +33,7 @@ type NoteRow = {
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
+  parent_id: string | null;
   is_public: boolean;
   public_id: string | null;
   published_at: Date | null;
@@ -64,7 +65,7 @@ type UpdatedNoteRow = NoteRow & {
 };
 
 const NOTE_COLUMNS = `id, title, body, created_at, updated_at, deleted_at,
-  is_public, public_id, published_at, author_handle`;
+  parent_id, is_public, public_id, published_at, author_handle`;
 
 function mapNote(row: NoteRow): Note {
   return {
@@ -74,6 +75,7 @@ function mapNote(row: NoteRow): Note {
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
     deleted_at: row.deleted_at ? row.deleted_at.toISOString() : null,
+    parent_id: row.parent_id,
     is_public: Boolean(row.is_public),
     public_id: row.public_id,
     published_at: row.published_at ? row.published_at.toISOString() : null,
@@ -271,25 +273,44 @@ export async function getPublicNote(
   return row ? mapPublicNote(row) : null;
 }
 
+/**
+ * Validate a caller-supplied parent for a new sub-note.
+ *
+ * Everything hangs off `resolveCanonicalNoteId`: it scopes to the caller's
+ * `user_id` (so another tenant's id is unresolvable), excludes archived notes,
+ * and normalizes aliases / hyphenless ids to the stored primary key.
+ * Returns null when the id is unusable — callers must fail closed, never
+ * silently create a root note where a sub-note was intended.
+ */
+export async function resolveParentNoteId(
+  userId: string,
+  rawParentId: string,
+): Promise<string | null> {
+  return resolveCanonicalNoteId(userId, rawParentId);
+}
+
 export async function createNote(
   userId: string,
   input?: {
     title?: string;
     body?: string;
+    /** Canonical id of the owning note; already validated by the caller. */
+    parentId?: string | null;
   },
 ): Promise<Note> {
   const title = input?.title ?? "";
   const body = input?.body ?? "";
+  const parentId = input?.parentId ?? null;
 
   // Rare primary-key collision: retry with a fresh Meet-style id.
   for (let attempt = 0; attempt < 5; attempt++) {
     const id = createNoteId();
     try {
       const result = await query<NoteRow>(
-        `INSERT INTO notes (id, user_id, title, body)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO notes (id, user_id, title, body, parent_id)
+         VALUES ($1, $2, $3, $4, $5)
          RETURNING ${NOTE_COLUMNS}`,
-        [id, userId, title, body],
+        [id, userId, title, body, parentId],
       );
       return mapNote(result.rows[0]);
     } catch (error) {
@@ -386,7 +407,7 @@ export async function updateNote(
          AND FLOOR(EXTRACT(EPOCH FROM n.updated_at) * 1000)::bigint = $5::bigint
        RETURNING
          n.id, n.title, n.body, n.created_at, n.updated_at, n.deleted_at,
-         n.is_public, n.public_id, n.published_at, n.author_handle,
+         n.parent_id, n.is_public, n.public_id, n.published_at, n.author_handle,
          prev.title AS prev_title,
          prev.body AS prev_body
      )

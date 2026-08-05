@@ -149,6 +149,25 @@ describe("noteLinkSource", () => {
     expect(v.state.selection.main.head).toBe(v.state.doc.length);
   });
 
+  // The create/link split is what makes hierarchy correct (#80): only
+  // create-from-inside nests, so picking an existing note must never reach
+  // `createNote` — that is the call the app hangs `parent_id` off.
+  it("never calls createNote when an existing note is picked", () => {
+    const createNote = vi.fn(async (title: string) => ({
+      id: "new-note-idz",
+      title,
+    }));
+    const v = mount("see [[deploy");
+    const result = complete(
+      noteLinkSource(options({ createNote })),
+      "see [[deploy",
+    );
+    result?.options[0].apply?.(v, result.options[0], 4, 12);
+
+    expect(v.state.doc.toString()).toBe("see [Deploy checklist](/n/abc-mnop-xyz)");
+    expect(createNote).not.toHaveBeenCalled();
+  });
+
   it("creates a note then inserts its link at the caret", async () => {
     const createNote = vi.fn(async (title: string) => ({
       id: "new-note-idz",
@@ -250,5 +269,20 @@ describe("slashCommandSource", () => {
     const link = result?.options.find((o) => o.label === "Link to note");
     link?.apply?.(v, link, 5, 9);
     expect(v.state.doc.toString()).toBe("note [[dep");
+  });
+
+  it("Link to note creates nothing, so it cannot nest a note (#80)", () => {
+    const createNote = vi.fn(async (title: string) => ({
+      id: "new-note-idz",
+      title,
+    }));
+    const v = mount("note /dep");
+    const result = complete(
+      slashCommandSource(options({ createNote })),
+      "note /dep",
+    );
+    const link = result?.options.find((o) => o.label === "Link to note");
+    link?.apply?.(v, link, 5, 9);
+    expect(createNote).not.toHaveBeenCalled();
   });
 });
