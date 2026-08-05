@@ -8,7 +8,7 @@ Live: [memo.chasehuh.com](https://memo.chasehuh.com)
 
 - Next.js (App Router) + `proxy.ts` (Next 16)
 - Clerk (`agentnote` app) with **GitHub OAuth** sign-in
-- CodeMirror 6 note editor (Zed-like chrome, soft wrap, Tab→spaces, Tab indents Markdown list markers; ⌘⌫ deletes to hard line start, ⇧⌘K deletes the line)
+- CodeMirror 6 note editor (Zed-like chrome, soft wrap, Tab→spaces, Tab indents Markdown list markers; ⌘B bold, ⇧⌘X strikethrough, ⌘⌫ deletes to hard line start, ⇧⌘K deletes the line)
 - Postgres (`pg`) — notes scoped by Clerk `user_id`
 - Optional Yjs CRDT note body (`NEXT_PUBLIC_AGENTNOTE_CRDT`, see below), with an optional Hocuspocus realtime server on Railway (`services/collab`)
 - Vercel
@@ -48,6 +48,17 @@ pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) and sign in with GitHub.
+
+### Keyboard
+
+| Key | Action |
+| --- | --- |
+| `⌘B` / `Ctrl+B` | Toggle `**bold**` around the selection (empty caret inserts `****`) |
+| `⇧⌘X` | Toggle `~~strikethrough~~` |
+| `⌘⇧B` / `Ctrl+Shift+B`, `⌘\` | Show / hide the notes sidebar |
+| `⌘N` | New note |
+| `⌘⌫` | Delete to hard line start |
+| `⇧⌘K` | Delete the line |
 
 When media env vars are set, pasting or dropping an image uploads it (Clerk-authenticated) under a preferred key prefix `agentnote/{userId}/…` and inserts `![alt](url)` Markdown at the caret. CodeMirror renders that mark as an inline preview under the source line (Obsidian Live Preview–style). Drag the corner handle to rewrite Obsidian `|width` syntax (`![alt|480](url)`); double-click the handle to clear the width. The Markdown string remains the only source of truth for body sync and persistence.
 
@@ -136,7 +147,7 @@ Endpoints (both Clerk-authenticated, both resolve the id **through `user_id`**):
 
 Two transports sit behind the same document model, chosen by `NEXT_PUBLIC_AGENTNOTE_COLLAB_URL` (see below). Unset: HTTP + a 1.5 s visible-tab poll, no extra infrastructure. Set: a Hocuspocus WebSocket. Either way a `doc-update` BroadcastChannel message converges peer tabs in about one frame.
 
-**Local-first.** Each open note is mirrored into IndexedDB under `agentnote.note.{userId}.{noteId}` (`y-indexeddb`), so a reload or a dropped connection loses nothing. On load the client applies the server state and then pushes back anything the server has never seen — offline edits are reconciled, not just overwritten. Reconnecting (`online`, tab focus, or the next poll) flushes whatever queued. While the server is unreachable the editor stays fully usable and the header reads **Offline — saved on this device**.
+**Local-first.** Each open note is mirrored into IndexedDB under `agentnote.note.{userId}.{noteId}` (`y-indexeddb`), so a reload or a dropped connection loses nothing. On load the client applies the server state and then pushes back anything the server has never seen — offline edits are reconciled, not just overwritten. Reconnecting (`online`, tab focus, or the next poll) flushes whatever queued. While the server is unreachable the editor stays fully usable and the titlebar shows a muted **Offline** mark (with Retry) to the left of Publish, tooltipped *saved on this device*. A note whose state has not landed yet reads **Syncing…** rather than claiming to be saved. Neither uses the red `.zed-save-error` chrome — that is reserved for real failures on the legacy whole-document path (session expired, conflict), because a CRDT edit is already durable in IndexedDB and nothing is at risk.
 
 Operational notes:
 

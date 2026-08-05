@@ -260,6 +260,42 @@ button.zed-titlebar__publish[data-active="true"]:hover:not(:disabled) {
   font-weight: 500;
 }
 
+/*
+ * CRDT sync status (Offline / Syncing…). Deliberately unlike .zed-save-error:
+ * no border, no fill, muted text. These states are recoverable by waiting and
+ * the edit is already durable on the device, so they must not read as alarms.
+ */
+.zed-titlebar__sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 6px;
+  margin-right: 2px;
+  color: var(--c-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.zed-titlebar__sync-action {
+  all: unset;
+  box-sizing: border-box;
+  color: var(--c-text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.zed-titlebar__sync-action:hover {
+  color: var(--c-text);
+}
+
 .zed-save-error {
   display: inline-flex;
   align-items: center;

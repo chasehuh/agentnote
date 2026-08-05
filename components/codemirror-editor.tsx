@@ -24,6 +24,7 @@ import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
 import { applyExternalValue } from "@/lib/editor/apply-external";
 import { arrowInputHandler, arrowPasteFilter } from "@/lib/editor/arrow-input";
+import { agentnoteBoldKeymap } from "@/lib/editor/bold";
 import { imageWidgets } from "@/lib/editor/image-widgets";
 import { agentnoteLinks } from "@/lib/editor/links";
 import { videoWidgets } from "@/lib/editor/video-widgets";
@@ -136,6 +137,7 @@ function editorExtensions(
             }),
           ]),
           agentnoteLineKillKeymap(),
+          agentnoteBoldKeymap(),
           agentnoteStrikethroughKeymap(),
           Prec.high(arrowInputHandler()),
           arrowPasteFilter(),
