@@ -8,6 +8,7 @@ import {
   RangeSetBuilder,
   StateField,
   type Extension,
+  type Transaction,
 } from "@codemirror/state";
 import {
   Decoration,
@@ -76,18 +77,41 @@ const FILE_LIKE_TLDS = new Set([
 
 export type LinkHit = { from: number; to: number; url: string };
 
+/** Milliseconds granted to finish parsing before falling back to a partial tree. */
+const PARSE_BUDGET_MS = 50;
+
+/**
+ * The most complete syntax tree available for the whole document.
+ *
+ * `ensureSyntaxTree` advances the language field's *shared, mutable* parse
+ * context and returns the resulting tree, but `syntaxTree(state)` reads the
+ * snapshot taken when the `LanguageState` was constructed — which is still the
+ * pre-parse one. Reading that snapshot is why a note opened with a link past the
+ * initially parsed region painted raw `[label](/n/id)` until the first edit
+ * produced a `LanguageState` carrying the advanced tree.
+ *
+ * The fallback covers a parse that ran out of budget: a partial tree still
+ * decorates everything it does cover, and the fields below rebuild when the
+ * background parser gets further.
+ */
+function documentTree(state: EditorState) {
+  return (
+    ensureSyntaxTree(state, state.doc.length, PARSE_BUDGET_MS) ??
+    syntaxTree(state)
+  );
+}
+
 function collectMarkdownLinks(state: EditorState): {
   /** Clickable span = visible link text only (label / autolink URL). */
   hits: LinkHit[];
   hide: { from: number; to: number }[];
   labels: { from: number; to: number }[];
 } {
-  ensureSyntaxTree(state, state.doc.length, 50);
   const hits: LinkHit[] = [];
   const hide: { from: number; to: number }[] = [];
   const labels: { from: number; to: number }[] = [];
 
-  syntaxTree(state).iterate({
+  documentTree(state).iterate({
     enter(node) {
       if (node.name !== "Link" && node.name !== "Autolink") return;
 
@@ -237,10 +261,24 @@ function buildLabelDecorations(state: EditorState): DecorationSet {
   return builder.finish();
 }
 
+/**
+ * True when this transaction changed the document or moved the parse forward.
+ *
+ * Rebuilding on `docChanged` alone is why a long note kept raw link markup after
+ * the first edit too: the background parser reports progress through a
+ * `Language.setState` transaction that changes no text, so the decorations never
+ * caught up with the region it had just parsed. Comparing the tree covers both,
+ * and `tr.state` is safe to read here because the language field is installed
+ * before these fields, so its value is already computed.
+ */
+function needsRebuild(tr: Transaction): boolean {
+  return tr.docChanged || syntaxTree(tr.startState) !== syntaxTree(tr.state);
+}
+
 const hiddenLinkMarks = StateField.define<DecorationSet>({
   create: buildHideDecorations,
   update(deco, tr) {
-    if (tr.docChanged) return buildHideDecorations(tr.state);
+    if (needsRebuild(tr)) return buildHideDecorations(tr.state);
     return deco.map(tr.changes);
   },
   provide: (field) => [
@@ -252,7 +290,7 @@ const hiddenLinkMarks = StateField.define<DecorationSet>({
 const visibleLinkMarks = StateField.define<DecorationSet>({
   create: buildLabelDecorations,
   update(deco, tr) {
-    if (tr.docChanged) return buildLabelDecorations(tr.state);
+    if (needsRebuild(tr)) return buildLabelDecorations(tr.state);
     return deco.map(tr.changes);
   },
   provide: (field) => EditorView.decorations.from(field),

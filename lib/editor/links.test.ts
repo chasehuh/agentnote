@@ -216,3 +216,75 @@ describe("agentnoteLinks decorations", () => {
     view.destroy();
   });
 });
+
+describe("agentnoteLinks first paint", () => {
+  const LINK = "[Deploy checklist](/n/abc-mnop-xyz)";
+  /**
+   * Over `Work.InitViewport` (3000 chars), so the language field's initial parse
+   * cannot finish. Its tree snapshot then stops short of the final paragraph —
+   * which is exactly where the link lives.
+   */
+  const LONG_NOTE = `${"a paragraph of ordinary prose\n\n".repeat(200)}see ${LINK} here`;
+  const LABEL_FROM = LONG_NOTE.indexOf(LINK) + 1;
+  const LABEL_TO = LABEL_FROM + "Deploy checklist".length;
+
+  let view: EditorView | null = null;
+
+  function mount(doc: string) {
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc,
+        extensions: [markdown(), agentnoteLinks()],
+      }),
+    });
+    return view;
+  }
+
+  /**
+   * Decorations read out of state rather than the DOM: jsdom has no layout, so
+   * a link below the fold is never rendered even when correctly decorated.
+   */
+  function decorations(v: EditorView) {
+    const labels: { from: number; to: number }[] = [];
+    const hidden: { from: number; to: number }[] = [];
+    for (const source of v.state.facet(EditorView.decorations)) {
+      const set = typeof source === "function" ? source(v) : source;
+      for (const iter = set.iter(); iter.value; iter.next()) {
+        const className = (iter.value.spec as { class?: string }).class ?? "";
+        const into = className.includes("cm-md-link") ? labels : hidden;
+        into.push({ from: iter.from, to: iter.to });
+      }
+    }
+    return { labels, hidden };
+  }
+
+  afterEach(() => {
+    view?.destroy();
+    view = null;
+    document.body.replaceChildren();
+  });
+
+  // The bug: `[label](/n/id)` painted raw until the first keystroke rolled it up.
+  it("rolls up a link past the initially parsed region without any edit", () => {
+    const { labels, hidden } = decorations(mount(LONG_NOTE));
+
+    expect(labels).toContainEqual({ from: LABEL_FROM, to: LABEL_TO });
+    // `](` and the `/n/…` destination are replaced away, not left as raw text.
+    expect(
+      hidden.some((range) => range.from === LABEL_TO && range.to > LABEL_TO),
+    ).toBe(true);
+  });
+
+  it("makes that link clickable on first paint too", () => {
+    const v = mount(LONG_NOTE);
+    expect(hrefAtPos(v.state, LABEL_FROM + 2)).toBe("/n/abc-mnop-xyz");
+  });
+
+  it("still decorates a link inside the initially parsed region", () => {
+    const v = mount(`see ${LINK} here\n\n${"filler\n\n".repeat(400)}`);
+    expect(decorations(v).labels).toContainEqual({ from: 5, to: 21 });
+  });
+});
