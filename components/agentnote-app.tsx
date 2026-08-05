@@ -8,6 +8,7 @@ import {
   useNoteDoc,
   type NoteDocProjection,
 } from "@/lib/crdt/use-note-doc";
+import { crdtSyncChrome } from "@/lib/crdt/sync-chrome";
 import { deriveNoteTitle } from "@/lib/note-title";
 import {
   DEFAULT_WRAP,
@@ -1273,18 +1274,22 @@ export function AgentNoteApp({
     ? previewTitle({ title: deriveNoteTitle(displayBody), body: displayBody })
     : "agentnote";
 
-  // CRDT edits are already durable in IndexedDB, so a failed sync is "not sent
-  // yet", not "not saved" — say so rather than reusing the legacy wording.
-  const saveErrorLabel = CRDT_ENABLED
-    ? "Offline"
-    : displaySaveErrorKind === "auth"
+  /**
+   * CRDT sync status — muted titlebar chrome, left of Publish. Its states are
+   * all recoverable-by-waiting, so they deliberately do NOT reuse the red
+   * `.zed-save-error` block below (which stays for legacy save failures).
+   */
+  const syncChrome =
+    CRDT_ENABLED && activeId ? crdtSyncChrome(docSession.status) : null;
+
+  const saveErrorLabel =
+    displaySaveErrorKind === "auth"
       ? "Sign in to save"
       : displaySaveErrorKind === "conflict"
         ? "Conflict"
         : "Not saved";
-  const saveErrorTitle = CRDT_ENABLED
-    ? "Saved on this device — syncs when the connection returns"
-    : displaySaveErrorKind === "auth"
+  const saveErrorTitle =
+    displaySaveErrorKind === "auth"
       ? "Session expired — sign in again to save"
       : displaySaveErrorKind === "conflict"
         ? "Another tab or device saved a newer version of this note"
@@ -1302,7 +1307,10 @@ export function AgentNoteApp({
         event.preventDefault();
         void createNote();
       }
-      if (meta && event.key.toLowerCase() === "b") {
+      // Plain ⌘B is Markdown bold in the editor (lib/editor/bold.ts). This
+      // listener must not match it at all: it sits on `window`, so a
+      // CodeMirror keymap's preventDefault would not stop it from also firing.
+      if (meta && event.shiftKey && event.key.toLowerCase() === "b") {
         event.preventDefault();
         setSidebarOpen((value) => !value);
       }
@@ -1317,14 +1325,14 @@ export function AgentNoteApp({
 
   return (
     <div className="zed-shell">
-      {/* Zed-like chrome: full-width titlebar; left dock toggle (⌘B) */}
+      {/* Zed-like chrome: full-width titlebar; left dock toggle (⌘⇧B) */}
       <header className="zed-titlebar">
         <button
           type="button"
           className="zed-icon-btn"
           data-active={sidebarOpen ? "true" : "false"}
           onClick={() => setSidebarOpen((value) => !value)}
-          title={sidebarOpen ? "Hide notes (⌘B)" : "Show notes (⌘B)"}
+          title={sidebarOpen ? "Hide notes (⌘⇧B)" : "Show notes (⌘⇧B)"}
           aria-label={sidebarOpen ? "Hide notes" : "Show notes"}
           aria-pressed={sidebarOpen}
         >
@@ -1338,6 +1346,24 @@ export function AgentNoteApp({
           {tabTitle}
         </span>
         <div className="zed-titlebar__spacer" />
+        {syncChrome ? (
+          <div
+            className="zed-titlebar__sync"
+            role="status"
+            title={syncChrome.title}
+          >
+            <span>{syncChrome.label}</span>
+            {syncChrome.retry ? (
+              <button
+                type="button"
+                className="zed-titlebar__sync-action"
+                onClick={retrySaveNow}
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <button
           type="button"
           className="zed-titlebar__publish"
@@ -1354,7 +1380,9 @@ export function AgentNoteApp({
         >
           {activeNote?.is_public ? "Published" : "Publish"}
         </button>
-        {displaySaveState === "error" ? (
+        {/* Legacy whole-document path only — the CRDT path is never a hard
+            error, and reports through `zed-titlebar__sync` above. */}
+        {!CRDT_ENABLED && displaySaveState === "error" ? (
           <div className="zed-save-error" role="alert" title={saveErrorTitle}>
             <span>{saveErrorLabel}</span>
             {displaySaveErrorKind === "auth" ? (
@@ -1567,7 +1595,7 @@ export function AgentNoteApp({
           ) : (
             <div className="zed-empty">
               <p>No open note</p>
-              <p className="zed-empty__hint">⌘B notes · ⌘N new</p>
+              <p className="zed-empty__hint">⌘⇧B notes · ⌘N new</p>
               <div className="zed-empty__actions">
                 <button
                   type="button"
