@@ -1295,11 +1295,15 @@ export function AgentNoteApp({
   /** `[[` / `/` wiring handed to CodeMirror. Reads live state on each keystroke. */
   const noteLinkOptions = useMemo(
     () => ({
+      // The active note is excluded: linking a note to itself is never useful,
+      // and it would otherwise sit at the top of the picker.
       candidates: () =>
-        notesRef.current.map((note) => ({
-          id: note.id,
-          title: previewTitle(note),
-        })),
+        notesRef.current
+          .filter((note) => note.id !== activeIdRef.current)
+          .map((note) => ({
+            id: note.id,
+            title: previewTitle(note),
+          })),
       /**
        * Create-from-inside — the ONLY gesture that nests. Picking an existing
        * note goes through `linkCompletion` and never reaches here, so a link

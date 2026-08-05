@@ -255,6 +255,8 @@ describe("slashCommandSource", () => {
     expect(createNote).toHaveBeenCalledWith("groceries");
   });
 
+  // Both handoffs must leave a *live* picker, not a stranded `[[` — see
+  // note-links.dom.test.ts, which asserts the popup itself.
   it("bare New note hands off to the [[ picker", () => {
     const v = mount("/");
     const result = complete(slashCommandSource(options()), "/");
@@ -269,6 +271,8 @@ describe("slashCommandSource", () => {
     const link = result?.options.find((o) => o.label === "Link to note");
     link?.apply?.(v, link, 5, 9);
     expect(v.state.doc.toString()).toBe("note [[dep");
+    // Caret sits after the seeded query, ready to keep narrowing.
+    expect(v.state.selection.main.head).toBe(10);
   });
 
   it("Link to note creates nothing, so it cannot nest a note (#80)", () => {
