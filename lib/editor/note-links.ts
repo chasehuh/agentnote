@@ -1,10 +1,16 @@
 import {
   autocompletion,
+  startCompletion,
   type Completion,
   type CompletionContext,
   type CompletionResult,
 } from "@codemirror/autocomplete";
-import { EditorSelection, type Extension } from "@codemirror/state";
+import {
+  EditorSelection,
+  StateEffect,
+  StateField,
+  type Extension,
+} from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { tagCompletionSource } from "./tags";
 
@@ -30,6 +36,67 @@ const SLASH_TRIGGER = /(?:^|\s)\/([^\s/\n]*)$/;
 
 /** Fallback label for a note whose body is still empty. */
 export const UNTITLED_LABEL = "Untitled";
+
+/** Offset of a `[[` that `/Link to note` opened, or null. See the field below. */
+const setLinkOnlyPicker = StateEffect.define<number | null>();
+
+/**
+ * Marks the `[[` trigger that `/Link to note` opened, so the picker there offers
+ * existing notes only.
+ *
+ * Link is a peer hyperlink, never a nesting create (#80), so its picker must not
+ * put `Create "…"` one Enter away — reaching `createNote` from here would quietly
+ * file the "linked" note as a sub-note of the one being edited (#81).
+ *
+ * The flag is a position rather than a boolean so it only ever applies to the one
+ * trigger it was set for, and it clears the moment an edit touches that trigger —
+ * a user who deletes the brackets and types `[[` by hand gets pick-or-create back.
+ */
+const linkOnlyPickerField = StateField.define<number | null>({
+  create: () => null,
+  update(pos, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setLinkOnlyPicker)) return effect.value;
+    }
+    if (pos === null) return null;
+    // Only an edit that overlaps the two bracket characters themselves counts —
+    // editing the query right after them is the user searching, not a new trigger.
+    let touched = false;
+    tr.changes.iterChangedRanges((fromA, toA) => {
+      if (fromA < pos + 2 && toA > pos) touched = true;
+    });
+    return touched ? null : tr.changes.mapPos(pos, 1);
+  },
+});
+
+/**
+ * Replace `from..to` with a `[[` trigger and **open** the picker on it.
+ *
+ * The dispatch alone leaves a dead trigger. A transaction that carries a
+ * selection but no `input.type` user event resets every completion source to
+ * Inactive (`@codemirror/autocomplete` `getUpdateType`), so the source is never
+ * re-queried — the user is left with a stranded `[[` and no popup, whether or not
+ * a query was seeded. `startCompletion` re-arms it explicitly, and the `explicit`
+ * flag it sets is what lets a query-less `[[` list the whole catalog without
+ * weakening the guard that keeps stray brackets from popping the list open.
+ */
+function openNotePicker(
+  view: EditorView,
+  from: number,
+  to: number,
+  query: string,
+  linkOnly: boolean,
+): void {
+  const insert = `[[${query}`;
+  view.dispatch({
+    changes: { from, to, insert },
+    selection: EditorSelection.cursor(from + insert.length),
+    userEvent: "input",
+    // The `[[` starts at `from` in the new doc too, so the offset needs no mapping.
+    effects: setLinkOnlyPicker.of(linkOnly ? from : null),
+  });
+  startCompletion(view);
+}
 
 export function noteLinkMarkdown(note: NoteLinkCandidate): string {
   const label = note.title.trim() || UNTITLED_LABEL;
@@ -145,14 +212,31 @@ export function noteLinkSource(options: NoteLinkOptions) {
     const matched = filterCandidates(candidates, query);
     const trimmed = query.trim();
 
+    // `field(…, false)` is undefined when the field is not installed, which never
+    // equals a numeric offset — so this source still works standalone.
+    const linkOnly =
+      context.state.field(linkOnlyPickerField, false) === match.from;
+
     const results: Completion[] = matched.map((note) =>
       linkCompletion(note, match.from, match.to),
     );
-    if (trimmed && !hasExactTitle(candidates, trimmed)) {
+    if (trimmed && !linkOnly && !hasExactTitle(candidates, trimmed)) {
       const create = createCompletion(trimmed, match.from, match.to, options);
       // Creating is the primary intent only when nothing matched.
       if (matched.length === 0) results.unshift(create);
       else results.push(create);
+    }
+    if (linkOnly && results.length === 0) {
+      // An empty result closes the popup, and a closed popup over a live `[[`
+      // is the dead trigger this picker exists to avoid. Link never creates, so
+      // there is nothing to offer here except an explanation — but the row keeps
+      // the source active, so backspacing narrows straight back to real notes.
+      results.push({
+        label: trimmed ? `No note matches "${trimmed}"` : "No other notes yet",
+        detail: "keep typing to search",
+        type: "text",
+        apply: () => {},
+      });
     }
     if (results.length === 0) return null;
 
@@ -188,12 +272,10 @@ export function slashCommandSource(options: NoteLinkOptions) {
             );
             return;
           }
-          // No title typed: drop the `/` and let `[[` drive the naming.
-          view.dispatch({
-            changes: { from, to: match.to, insert: "[[" },
-            selection: EditorSelection.cursor(from + 2),
-            userEvent: "input",
-          });
+          // No title typed: drop the `/` and let `[[` drive the naming, so
+          // creating still needs a title but picking an existing note is right
+          // there too.
+          openNotePicker(view, from, match.to, "", false);
         },
       },
       {
@@ -201,12 +283,10 @@ export function slashCommandSource(options: NoteLinkOptions) {
         detail: "search existing notes",
         type: "keyword",
         apply: (view: EditorView) => {
-          const insert = `[[${trimmed}`;
-          view.dispatch({
-            changes: { from, to: match.to, insert },
-            selection: EditorSelection.cursor(from + insert.length),
-            userEvent: "input",
-          });
+          // Hands off to the `[[` picker seeded with whatever was typed, so the
+          // user never retypes the query — and link-only, so this gesture can
+          // never reach `createNote`.
+          openNotePicker(view, from, match.to, trimmed, true);
         },
       },
     ];
@@ -241,14 +321,17 @@ export function agentnoteCompletion(options: {
   noteLinks: NoteLinkOptions;
   knownTags: () => string[];
 }): Extension {
-  return autocompletion({
-    override: [
-      noteLinkSource(options.noteLinks),
-      slashCommandSource(options.noteLinks),
-      tagCompletionSource(options.knownTags),
-    ],
-    icons: false,
-    // Prose, not code: never silently complete on blur.
-    closeOnBlur: true,
-  });
+  return [
+    linkOnlyPickerField,
+    autocompletion({
+      override: [
+        noteLinkSource(options.noteLinks),
+        slashCommandSource(options.noteLinks),
+        tagCompletionSource(options.knownTags),
+      ],
+      icons: false,
+      // Prose, not code: never silently complete on blur.
+      closeOnBlur: true,
+    }),
+  ];
 }
