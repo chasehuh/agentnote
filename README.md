@@ -184,7 +184,8 @@ NEXT_PUBLIC_AGENTNOTE_COLLAB_URL=ws://localhost:1234 pnpm dev
 
 Operational notes:
 
-- **Preview deployments are blocked by the allowlist.** Production is pinned to `https://memo.chasehuh.com`. To exercise realtime from a Vercel preview, add that origin to `AGENTNOTE_ALLOWED_ORIGINS` or clear the variable.
+- **Preview deployments are blocked by the allowlist.** Production is pinned to `https://www.agentnote.dev,https://agentnote.dev,https://memo.chasehuh.com` — the live origin is `https://www.agentnote.dev`, and the other two redirect to it. To exercise realtime from a Vercel preview, add that origin to `AGENTNOTE_ALLOWED_ORIGINS` or clear the variable.
+- **A note this device has never opened needs the socket.** The editor mounts on the CRDT document, and on this transport that document only arrives over the WebSocket — a note with no IndexedDB copy stays read-only (showing the last projected `notes.body`) until the socket connects. Notes this device has already opened stay fully editable offline and flush on reconnect.
 - **Remote cursors stay off.** The editor keeps its own awareness and the provider runs with `awareness: null`; wiring presence across the bridge is Phase 3 work.
 - **A note's sidebar row** refreshes from the existing notes-list poll on this path — the realtime server writes `notes.body` on its own debounce rather than answering each edit.
 
