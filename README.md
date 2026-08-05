@@ -60,6 +60,23 @@ Open [http://localhost:3000](http://localhost:3000) and sign in with GitHub.
 | `⌘⌫` | Delete to hard line start |
 | `⇧⌘K` | Delete the line |
 
+### Sub-notes, wiki links, and tags
+
+Notes link to each other as an Obsidian/Notion-style graph. A "sub-note" is an ordinary note row — there is no nested hierarchy, no folders — referenced from any body by a plain Markdown deep link.
+
+| Type | Result |
+| --- | --- |
+| `[[` | Note picker. Filters your notes as you type; `Enter` inserts `[Title](/n/{id})`. |
+| `[[` + a name that matches nothing | `Create "…"` — creates the note **and** inserts its link, without leaving the note you are writing. |
+| `/` (line start or after a space) | Command palette: **New note**, **Link to note**. The word after `/` is the argument, so `/groceries` → New note creates "groceries". |
+| `#` | Completes from tags already used across your notes. |
+
+**`[[` is a trigger, never a storage format.** Only standard Markdown is written to the body, so publishing, `note_revisions`, and CRDT sync need no knowledge of any of it. Existing `[label](/n/{id})` links keep working unchanged.
+
+Because the link label is a snapshot of the title at insertion time, renaming a note does not rewrite links that point at it (Notion's behavior, not Obsidian's rename-refactor).
+
+**Tags** are inline `#tag` in the body — `#idea`, `#work/agentnote`. A tag must follow whitespace and contain at least one non-digit, so `# Heading` stays a heading and `#1` stays an issue reference; tags inside fenced code blocks, inline code spans, and link destinations are ignored. Tags are derived from note bodies on the client, so there is no table to migrate and no index to keep in sync. Click a tag in the editor, or a chip in the sidebar, to filter the note list.
+
 When media env vars are set, pasting or dropping an image uploads it (Clerk-authenticated) under a preferred key prefix `agentnote/{userId}/…` and inserts `![alt](url)` Markdown at the caret. CodeMirror renders that mark as an inline preview under the source line (Obsidian Live Preview–style). Drag the corner handle to rewrite Obsidian `|width` syntax (`![alt|480](url)`); double-click the handle to clear the width. The Markdown string remains the only source of truth for body sync and persistence.
 
 ### Production GitHub OAuth App (human step)

@@ -563,6 +563,39 @@ a.zed-save-error__action {
   gap: 4px;
 }
 
+.zed-panel__tags {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 96px;
+  overflow: auto;
+  padding: 8px 8px 0;
+}
+
+.zed-tag-chip {
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--c-border-variant);
+  border-radius: 999px;
+  color: var(--c-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.zed-tag-chip:hover {
+  background: var(--c-element-hover);
+  color: var(--c-text);
+}
+
+.zed-tag-chip[data-active="true"] {
+  border-color: var(--c-text-accent);
+  background: color-mix(in srgb, var(--c-text-accent) 16%, transparent);
+  color: var(--c-text-accent);
+}
+
 .zed-panel__list {
   flex: 1;
   overflow: auto;
@@ -713,6 +746,64 @@ a.zed-save-error__action {
 
 .cm-md-link:hover {
   filter: brightness(1.15);
+}
+
+/* `#tag` — accent-tinted but not underlined, so it stays distinct from links. */
+.cm-tag {
+  color: var(--c-text-accent);
+  opacity: 0.85;
+  cursor: pointer;
+}
+
+.cm-tag:hover {
+  opacity: 1;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* —— `[[` / `/` / `#` completion popup —— */
+
+.cm-tooltip.cm-tooltip-autocomplete {
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  background: var(--c-elevated);
+  box-shadow: 0 12px 28px #00000066;
+  overflow: hidden;
+}
+
+.cm-tooltip.cm-tooltip-autocomplete > ul {
+  max-height: 260px;
+  max-width: 320px;
+  font-family: var(--c-ui-font);
+  font-size: 12px;
+}
+
+.cm-tooltip.cm-tooltip-autocomplete > ul > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 10px;
+  color: var(--c-text);
+  line-height: 1.35;
+}
+
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--c-element-selected);
+  color: var(--c-text);
+}
+
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionDetail {
+  flex-shrink: 0;
+  color: var(--c-text-placeholder);
+  font-size: 11px;
+  font-style: normal;
 }
 
 .cm-md-image {

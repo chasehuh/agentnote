@@ -35,7 +35,12 @@ import {
   agentnoteListOutdentOnShiftTab,
   LIST_INDENT_UNIT,
 } from "@/lib/editor/list-indent";
+import {
+  agentnoteCompletion,
+  type NoteLinkOptions,
+} from "@/lib/editor/note-links";
 import { imagePasteDrop } from "@/lib/editor/paste-images";
+import { agentnoteTagHighlight, agentnoteTags } from "@/lib/editor/tags";
 import {
   agentnoteStrikethroughHighlight,
   agentnoteStrikethroughKeymap,
@@ -64,6 +69,13 @@ type CodeMirrorEditorProps = {
   placeholderText?: string;
   /** Published / share view — no edits, no active-line chrome. */
   readOnly?: boolean;
+  /**
+   * Wiring for `[[` note links and the `/` palette. Omitted (or read-only)
+   * mounts the editor without any completion — `/p/…` has no notes list.
+   */
+  noteLinks?: NoteLinkOptions;
+  /** Tags known across the user's notes, for `#` completion. */
+  knownTags?: () => string[];
 };
 
 function insertSoftTab(view: EditorView) {
@@ -86,6 +98,8 @@ function editorExtensions(
   readOnly: boolean,
   ytext: Y.Text | undefined,
   awareness: Awareness | null | undefined,
+  noteLinks: NoteLinkOptions | undefined,
+  knownTags: (() => string[]) | undefined,
 ) {
   return [
     lineNumbers(),
@@ -142,11 +156,23 @@ function editorExtensions(
           Prec.high(arrowInputHandler()),
           arrowPasteFilter(),
           imagePasteDrop(),
+          // `[[` note links, `/` commands, `#` tags — authoring only.
+          ...(noteLinks
+            ? [
+                agentnoteCompletion({
+                  noteLinks,
+                  knownTags: knownTags ?? (() => []),
+                }),
+              ]
+            : []),
         ]),
     imageWidgets,
     videoWidgets,
     // Obsidian-style clickable markdown links (edit + readOnly).
     agentnoteLinks(),
+    // `#tag` chrome. Published notes get the paint but no click-to-filter —
+    // there is no sidebar to filter over there.
+    readOnly ? agentnoteTagHighlight() : agentnoteTags(),
     // Zed-like one_page: content-only spacer so gutters stay CM-owned geometry
     scrollPastEnd(),
     // Remote updates arrive as CM transactions, so caret, scroll, and IME
@@ -242,16 +268,30 @@ export function CodeMirrorEditor({
   autoFocus = false,
   placeholderText = "Start typing…",
   readOnly = false,
+  noteLinks,
+  knownTags,
 }: CodeMirrorEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onExternalReconcileRef = useRef(onExternalReconcile);
+  // The editor mounts once; completion reads the latest notes/tags through
+  // these refs so a new note is linkable without remounting CodeMirror.
+  // Synced in an effect (as lib/crdt/use-note-doc.ts does) rather than during
+  // render — `useRef(prop)` already seeds the first value, and completion
+  // callbacks only fire from user interaction, long after effects flush.
+  const noteLinksRef = useRef(noteLinks);
+  const knownTagsRef = useRef(knownTags);
   const wrapCompartment = useRef(new Compartment());
   const applyingExternal = useRef(false);
 
   onChangeRef.current = onChange;
   onExternalReconcileRef.current = onExternalReconcile;
+
+  useEffect(() => {
+    noteLinksRef.current = noteLinks;
+    knownTagsRef.current = knownTags;
+  });
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -268,6 +308,15 @@ export function CodeMirrorEditor({
           readOnly,
           ytext,
           awareness,
+          noteLinks
+            ? {
+                candidates: () => noteLinksRef.current?.candidates() ?? [],
+                createNote: (title) =>
+                  noteLinksRef.current?.createNote(title) ??
+                  Promise.resolve(null),
+              }
+            : undefined,
+          () => knownTagsRef.current?.() ?? [],
         ),
       }),
       parent: hostRef.current,

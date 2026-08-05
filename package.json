@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.5.18",
+    "@codemirror/autocomplete": "6.20.3",
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/language": "^6.12.4",
