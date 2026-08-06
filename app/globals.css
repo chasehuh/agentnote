@@ -773,6 +773,16 @@ a.zed-save-error__action {
   filter: brightness(1.15);
 }
 
+/* Link unwrapped for editing — raw `[label](url)` chrome, caret not pointer. */
+.cm-md-link-src {
+  color: var(--c-text-accent);
+  opacity: 0.55;
+}
+
+.cm-md-link-src-label {
+  opacity: 1;
+}
+
 /* `#tag` — accent-tinted but not underlined, so it stays distinct from links. */
 .cm-tag {
   color: var(--c-text-accent);

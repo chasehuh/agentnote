@@ -19,6 +19,16 @@ import {
 const hideMark = Decoration.replace({});
 const linkLabelMark = Decoration.mark({ class: "cm-md-link" });
 const bareLinkMark = Decoration.mark({ class: "cm-md-link cm-md-link--bare" });
+/**
+ * Source-mode chrome for a link the caret is editing.
+ *
+ * Deliberately *not* a `cm-md-link` class token: `tryOpenLinkAtPointer` matches
+ * `el.closest(".cm-md-link")`, so an unwrapped link cannot be click-opened and a
+ * plain click just places the caret. (`.cm-md-link--bare` keeps opening because
+ * its spec carries `cm-md-link` as a separate token.)
+ */
+const linkSourceMark = Decoration.mark({ class: "cm-md-link-src" });
+const linkSourceLabelMark = Decoration.mark({ class: "cm-md-link-src-label" });
 
 /**
  * Bare URLs in the buffer (not inside `](…)` destinations):
@@ -77,6 +87,94 @@ const FILE_LIKE_TLDS = new Set([
 
 export type LinkHit = { from: number; to: number; url: string };
 
+/** Full markdown span of a link: `[label](url)` or `<url>`, chrome included. */
+export type LinkSpan = { from: number; to: number };
+
+/**
+ * The link span containing `pos`, when `pos` is **strictly** inside it.
+ *
+ * Boundaries are excluded on purpose: `pos === from` (before `[`) and
+ * `pos === to` (after `)`) are "next to the chip", not "in it", so breaking or
+ * typing there keeps working exactly as it does outside a link, and walking off
+ * the end of a link re-rolls it instead of leaving it stuck open.
+ *
+ * Uses `resolveInner` rather than the full-document `documentTree().iterate()`
+ * of `collectMarkdownLinks` — this runs on every selection change, so it has to
+ * stay O(log n). The cost is that a link past the parsed region (#84/#85) is not
+ * found yet; that self-corrects, because the fields below recompute on parse
+ * progress too.
+ */
+export function linkSpanAt(state: EditorState, pos: number): LinkSpan | null {
+  const inner = syntaxTree(state).resolveInner(pos, -1);
+  for (let node: typeof inner | null = inner; node; node = node.parent) {
+    if (node.name === "Link" || node.name === "Autolink") {
+      return pos > node.from && pos < node.to
+        ? { from: node.from, to: node.to }
+        : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Links the user is editing right now — the ones painted as source instead of
+ * rolled up.
+ *
+ * Only selection *endpoints* count. A sweep-select or ⌘A that happens to span a
+ * link leaves it rolled up: reflowing every link in the document into source
+ * because the user selected a paragraph would be worse than useless.
+ *
+ * Published `/p/…` notes mount this extension too — there is nothing to edit
+ * there, so a reader dragging across a link should never see raw markup.
+ */
+function collectActiveLinks(state: EditorState): readonly LinkSpan[] {
+  if (state.readOnly) return [];
+  const spans: LinkSpan[] = [];
+  for (const range of state.selection.ranges) {
+    const ends = range.empty ? [range.head] : [range.anchor, range.head];
+    for (const pos of ends) {
+      const span = linkSpanAt(state, pos);
+      if (span && !spans.some((seen) => seen.from === span.from)) {
+        spans.push(span);
+      }
+    }
+  }
+  return spans.sort((a, b) => a.from - b.from);
+}
+
+function sameSpans(a: readonly LinkSpan[], b: readonly LinkSpan[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((span, i) => span.from === b[i]?.from && span.to === b[i]?.to)
+  );
+}
+
+/**
+ * Which links are unwrapped for editing.
+ *
+ * Returns the previous array by identity when the set is unchanged, so the
+ * decoration fields below can decide whether to rebuild with a reference
+ * compare instead of re-walking the document on every caret move.
+ */
+const activeLinks = StateField.define<readonly LinkSpan[]>({
+  create: collectActiveLinks,
+  update(prev, tr) {
+    if (
+      !tr.docChanged &&
+      !tr.selection &&
+      syntaxTree(tr.startState) === syntaxTree(tr.state)
+    ) {
+      return prev;
+    }
+    const next = collectActiveLinks(tr.state);
+    return sameSpans(prev, next) ? prev : next;
+  },
+});
+
+function activeLinkSpans(state: EditorState): readonly LinkSpan[] {
+  return state.field(activeLinks, false) ?? [];
+}
+
 /** Milliseconds granted to finish parsing before falling back to a partial tree. */
 const PARSE_BUDGET_MS = 50;
 
@@ -101,15 +199,23 @@ function documentTree(state: EditorState) {
   );
 }
 
-function collectMarkdownLinks(state: EditorState): {
+function collectMarkdownLinks(
+  state: EditorState,
+  active: readonly LinkSpan[] = [],
+): {
   /** Clickable span = visible link text only (label / autolink URL). */
   hits: LinkHit[];
   hide: { from: number; to: number }[];
   labels: { from: number; to: number }[];
+  /** Unwrapped links: full markdown span + the label inside it. */
+  sources: { from: number; to: number }[];
+  sourceLabels: { from: number; to: number }[];
 } {
   const hits: LinkHit[] = [];
   const hide: { from: number; to: number }[] = [];
   const labels: { from: number; to: number }[] = [];
+  const sources: { from: number; to: number }[] = [];
+  const sourceLabels: { from: number; to: number }[] = [];
 
   documentTree(state).iterate({
     enter(node) {
@@ -143,26 +249,37 @@ function collectMarkdownLinks(state: EditorState): {
       if (urlFrom < 0) return;
       const url = state.doc.sliceString(urlFrom, urlTo);
 
-      if (node.name === "Autolink") {
-        // Keep the URL visible; hide only <…> wrappers.
-        for (const mark of marks) hide.push({ from: mark.from, to: mark.to });
-        labels.push({ from: urlFrom, to: urlTo });
-        // Clickable = visible URL text, not the surrounding `<>` chrome.
-        hits.push({ from: urlFrom, to: urlTo, url });
+      // Autolinks show their URL as the label; `[label](url)` shows the label.
+      const isAutolink = node.name === "Autolink";
+      const textFrom = isAutolink ? urlFrom : labelFrom;
+      const textTo = isAutolink ? urlTo : labelTo;
+      const hasText = textFrom >= 0 && textTo > textFrom;
+
+      // `hits` stays unconditional: it answers "what does this position link
+      // to", which callers (bare-link occupancy, hrefAtPos) need either way.
+      if (hasText) hits.push({ from: textFrom, to: textTo, url });
+
+      const editing = active.some(
+        (span) => span.from === node.from && span.to === node.to,
+      );
+      if (editing) {
+        // Editing this one: leave every character in place. Skipping the `hide`
+        // ranges drops the atomic ranges with them, since the atomic facet is
+        // derived from the same field.
+        sources.push({ from: node.from, to: node.to });
+        if (hasText) sourceLabels.push({ from: textFrom, to: textTo });
         return;
       }
 
-      // [label](url) — hide chrome + destination; only the label is clickable.
+      // Hide the `<…>` wrappers of an autolink, and the chrome + destination of
+      // a `[label](url)`; the remaining visible text is what stays clickable.
       for (const mark of marks) hide.push({ from: mark.from, to: mark.to });
-      hide.push({ from: urlFrom, to: urlTo });
-      if (labelFrom >= 0 && labelTo > labelFrom) {
-        labels.push({ from: labelFrom, to: labelTo });
-        hits.push({ from: labelFrom, to: labelTo, url });
-      }
+      if (!isAutolink) hide.push({ from: urlFrom, to: urlTo });
+      if (hasText) labels.push({ from: textFrom, to: textTo });
     },
   });
 
-  return { hits, hide, labels };
+  return { hits, hide, labels, sources, sourceLabels };
 }
 
 /** Collect bare http(s) URLs that are not already covered by markdown links. */
@@ -231,7 +348,7 @@ export function findBareLinksInText(
 }
 
 function buildHideDecorations(state: EditorState): DecorationSet {
-  const { hide } = collectMarkdownLinks(state);
+  const { hide } = collectMarkdownLinks(state, activeLinkSpans(state));
   const builder = new RangeSetBuilder<Decoration>();
   const sorted = [...hide].sort((a, b) => a.from - b.from || a.to - b.to);
   for (const range of sorted) {
@@ -242,11 +359,19 @@ function buildHideDecorations(state: EditorState): DecorationSet {
 }
 
 function buildLabelDecorations(state: EditorState): DecorationSet {
-  const md = collectMarkdownLinks(state);
+  const md = collectMarkdownLinks(state, activeLinkSpans(state));
   const bare = collectBareLinks(state, md.hits);
   const builder = new RangeSetBuilder<Decoration>();
   const items = [
     ...md.labels.map((range) => ({ ...range, deco: linkLabelMark })),
+    // A source span always opens one offset before its label (`[` vs the first
+    // label char), so nesting never produces an equal-`from` tie the builder
+    // would have to order.
+    ...md.sources.map((range) => ({ ...range, deco: linkSourceMark })),
+    ...md.sourceLabels.map((range) => ({
+      ...range,
+      deco: linkSourceLabelMark,
+    })),
     ...bare.map((hit) => ({
       from: hit.from,
       to: hit.to,
@@ -270,9 +395,20 @@ function buildLabelDecorations(state: EditorState): DecorationSet {
  * caught up with the region it had just parsed. Comparing the tree covers both,
  * and `tr.state` is safe to read here because the language field is installed
  * before these fields, so its value is already computed.
+ *
+ * The third clause rolls links up and down as the caret moves. `activeLinks`
+ * hands back its previous value by identity when the set is unchanged, so plain
+ * caret motion outside a link costs one reference compare, not a rebuild —
+ * `activeLinks` is listed before these fields in `agentnoteLinks()`, on the same
+ * ordering grounds as the language field.
  */
 function needsRebuild(tr: Transaction): boolean {
-  return tr.docChanged || syntaxTree(tr.startState) !== syntaxTree(tr.state);
+  return (
+    tr.docChanged ||
+    syntaxTree(tr.startState) !== syntaxTree(tr.state) ||
+    tr.startState.field(activeLinks, false) !==
+      tr.state.field(activeLinks, false)
+  );
 }
 
 const hiddenLinkMarks = StateField.define<DecorationSet>({
@@ -443,7 +579,20 @@ function linkClickHandler() {
   );
 }
 
-/** Obsidian-style links: `[label](url)` chrome hidden; label / bare URL clickable. */
+/**
+ * Obsidian Live Preview links.
+ *
+ * Rolled up: `[label](url)` chrome is replaced away and atomic, the label is
+ * clickable, and a plain left-click opens the note / URL.
+ *
+ * Unwrapped: while a selection endpoint is strictly inside a link's markdown
+ * span, that link's chrome is neither hidden nor atomic, so the caret walks it
+ * one character at a time and label and URL are editable in place. A plain click
+ * inside it places the caret instead of navigating. It re-rolls in the same
+ * transaction that moves the caret out — position drives it, never a timer.
+ *
+ * `activeLinks` comes first: the decoration fields read it out of `tr.state`.
+ */
 export function agentnoteLinks(): Extension {
-  return [hiddenLinkMarks, visibleLinkMarks, linkClickHandler()];
+  return [activeLinks, hiddenLinkMarks, visibleLinkMarks, linkClickHandler()];
 }
