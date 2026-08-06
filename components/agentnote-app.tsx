@@ -21,6 +21,7 @@ import {
   ancestorIds,
   collapsibleIds,
   flattenNoteTree,
+  mostRecentRootNote,
   type NoteTreeRow,
 } from "@/lib/note-tree";
 import { allTags, noteHasTag } from "@/lib/tags";
@@ -178,18 +179,35 @@ function resolveInitialNote(
     const match = notes.find((note) => note.id === initialSelectedId);
     if (match) return match;
   }
-  return notes[0] ?? null;
+  // Home / empty deep-link: newest root only — never open a nested sub-note.
+  return mostRecentRootNote(notes);
 }
 
 function notePath(id: string | null) {
   return id ? `/n/${id}` : "/";
 }
 
-/** Soft URL sync — avoids App Router remount when switching notes. */
-function replaceNoteUrl(id: string | null) {
+type NoteUrlMode = "push" | "replace" | "none";
+
+/**
+ * Soft URL sync — avoids App Router remount when switching notes.
+ * `push` records history so the browser back button moves between notes;
+ * `replace` is for involuntary jumps (archive fallback, etc.).
+ */
+function syncNoteUrl(id: string | null, mode: NoteUrlMode = "replace") {
+  if (mode === "none") return;
   const next = notePath(id);
   if (window.location.pathname === next) return;
-  window.history.replaceState(window.history.state, "", next);
+  if (mode === "push") {
+    window.history.pushState({ noteId: id }, "", next);
+  } else {
+    window.history.replaceState({ noteId: id }, "", next);
+  }
+}
+
+function noteIdFromPath(pathname: string): string | null {
+  const match = /^\/n\/([^/]+)\/?$/.exec(pathname);
+  return match?.[1] ?? null;
 }
 
 export function AgentNoteApp({
@@ -637,7 +655,7 @@ export function AgentNoteApp({
   );
 
   const applyActiveNoteSelection = useCallback(
-    (note: Note) => {
+    (note: Note, opts?: { history?: NoteUrlMode }) => {
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
@@ -653,28 +671,32 @@ export function AgentNoteApp({
       baseBodyRef.current = note.body;
       setSaveErrorKind(null);
       setSaveStateNow(nextBody === note.body ? "saved" : "dirty");
-      replaceNoteUrl(note.id);
+      // Default push so sidebar / in-app link navigation builds a back stack.
+      syncNoteUrl(note.id, opts?.history ?? "push");
       if (isNarrowViewport()) setSidebarOpen(false);
     },
     [clearSaveRetry, setBodyNow, setSaveStateNow],
   );
 
-  const applyClearActiveNote = useCallback(() => {
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
-    clearSaveRetry();
-    skipNextSave.current = true;
-    setActiveId(null);
-    setBodyNow("");
-    lastAckedBodyRef.current = "";
-    baseUpdatedAtRef.current = "";
-    baseBodyRef.current = "";
-    setSaveErrorKind(null);
-    setSaveStateNow("saved");
-    replaceNoteUrl(null);
-  }, [clearSaveRetry, setBodyNow, setSaveStateNow]);
+  const applyClearActiveNote = useCallback(
+    (opts?: { history?: NoteUrlMode }) => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      clearSaveRetry();
+      skipNextSave.current = true;
+      setActiveId(null);
+      setBodyNow("");
+      lastAckedBodyRef.current = "";
+      baseUpdatedAtRef.current = "";
+      baseBodyRef.current = "";
+      setSaveErrorKind(null);
+      setSaveStateNow("saved");
+      syncNoteUrl(null, opts?.history ?? "push");
+    },
+    [clearSaveRetry, setBodyNow, setSaveStateNow],
+  );
 
   const persist = useCallback(
     async (
@@ -1014,6 +1036,26 @@ export function AgentNoteApp({
     };
   }, [selectNote]);
 
+  // Browser back/forward — sync the open note to the URL without pushing again.
+  useEffect(() => {
+    function onPopState() {
+      const id = noteIdFromPath(window.location.pathname);
+      if (!id) {
+        if (activeIdRef.current !== null) {
+          applyClearActiveNote({ history: "none" });
+        }
+        return;
+      }
+      const target = notesRef.current.find((item) => item.id === id);
+      if (!target || target.id === activeIdRef.current) return;
+      applyActiveNoteSelection(target, { history: "none" });
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+    };
+  }, [applyActiveNoteSelection, applyClearActiveNote]);
+
   // Clicking a `#tag` in the editor filters the sidebar (lib/editor/tags.ts).
   useEffect(() => {
     function onSelectTag(event: Event) {
@@ -1105,12 +1147,13 @@ export function AgentNoteApp({
           activeIdRef.current &&
           !remoteIds.has(activeIdRef.current)
         ) {
-          const fallback = sortNotesByRecent(
-            remoteNotes,
-          )[0] ?? null;
+          const fallback =
+            mostRecentRootNote(remoteNotes) ??
+            sortNotesByRecent(remoteNotes)[0] ??
+            null;
           if (fallback) {
             // Active note vanished remotely — switch without flushing a ghost id.
-            applyActiveNoteSelection(fallback);
+            applyActiveNoteSelection(fallback, { history: "replace" });
           } else {
             void clearActiveNote({ skipFlush: true });
           }
@@ -1149,7 +1192,7 @@ export function AgentNoteApp({
             prev.filter((note) => note.id !== message.note.id),
           );
           if (activeIdRef.current === message.note.id) {
-            const fallback = next[0] ?? null;
+            const fallback = mostRecentRootNote(next) ?? next[0] ?? null;
             skipNextSave.current = true;
             if (fallback) {
               const nextBody = substituteAsciiArrows(fallback.body).text;
@@ -1158,14 +1201,14 @@ export function AgentNoteApp({
               lastAckedBodyRef.current = nextBody;
               baseUpdatedAtRef.current = fallback.updated_at;
               baseBodyRef.current = fallback.body;
-              replaceNoteUrl(fallback.id);
+              syncNoteUrl(fallback.id, "replace");
             } else {
               setActiveId(null);
               setBodyNow("");
               lastAckedBodyRef.current = "";
               baseUpdatedAtRef.current = "";
               baseBodyRef.current = "";
-              replaceNoteUrl(null);
+              syncNoteUrl(null, "replace");
             }
             setSaveStateNow("saved");
           }
@@ -1192,7 +1235,7 @@ export function AgentNoteApp({
             prev.filter((note) => note.id !== message.id),
           );
           if (activeIdRef.current === message.id) {
-            const fallback = next[0] ?? null;
+            const fallback = mostRecentRootNote(next) ?? next[0] ?? null;
             skipNextSave.current = true;
             if (fallback) {
               const nextBody = substituteAsciiArrows(fallback.body).text;
@@ -1201,14 +1244,14 @@ export function AgentNoteApp({
               lastAckedBodyRef.current = nextBody;
               baseUpdatedAtRef.current = fallback.updated_at;
               baseBodyRef.current = fallback.body;
-              replaceNoteUrl(fallback.id);
+              syncNoteUrl(fallback.id, "replace");
             } else {
               setActiveId(null);
               setBodyNow("");
               lastAckedBodyRef.current = "";
               baseUpdatedAtRef.current = "";
               baseBodyRef.current = "";
-              replaceNoteUrl(null);
+              syncNoteUrl(null, "replace");
             }
             setSaveStateNow("saved");
           }
@@ -1365,7 +1408,7 @@ export function AgentNoteApp({
       );
       setNotes(remaining);
       if (wasActive) {
-        const fallback = remaining[0] ?? null;
+        const fallback = mostRecentRootNote(remaining) ?? remaining[0] ?? null;
         if (fallback) {
           await selectNote(fallback, { skipFlush: true });
         } else {

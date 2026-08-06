@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ancestorIds, collapsibleIds, flattenNoteTree } from "./note-tree";
+import {
+  ancestorIds,
+  collapsibleIds,
+  flattenNoteTree,
+  mostRecentRootNote,
+} from "./note-tree";
 import type { Note } from "./types";
 
 /** Minutes-apart timestamps so recency ordering is unambiguous. */
@@ -173,5 +178,25 @@ describe("collapsibleIds", () => {
       note("leaf", null, 7),
     ];
     expect(collapsibleIds(notes)).toEqual(["parent"]);
+  });
+});
+
+describe("mostRecentRootNote", () => {
+  it("picks the newest root even when a child is newer", () => {
+    const notes = [
+      note("root-old", null, 1),
+      note("child-hot", "root-old", 9),
+      note("root-mid", null, 5),
+    ];
+    expect(mostRecentRootNote(notes)?.id).toBe("root-mid");
+  });
+
+  it("returns null when there are no notes", () => {
+    expect(mostRecentRootNote([])).toBeNull();
+  });
+
+  it("surfaces an orphaned child as a root when its parent is absent", () => {
+    const notes = [note("orphan", "missing-parent", 3)];
+    expect(mostRecentRootNote(notes)?.id).toBe("orphan");
   });
 });
