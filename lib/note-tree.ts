@@ -47,6 +47,17 @@ function indexByParent(notes: Note[]) {
 }
 
 /**
+ * Default landing note: newest *root* (not a nested sub-note).
+ *
+ * A child with a missing/archived parent surfaces as a root via
+ * `indexByParent` — same rule as the sidebar — so landing never opens a
+ * note that still nests under a visible parent.
+ */
+export function mostRecentRootNote(notes: Note[]): Note | null {
+  return indexByParent(notes).roots[0] ?? null;
+}
+
+/**
  * Ancestor chain for `id`, nearest parent first. Drives auto-reveal (Zed's
  * `project_panel.auto_reveal_entries`). Stops at a cycle rather than looping.
  */
