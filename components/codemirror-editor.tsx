@@ -7,7 +7,6 @@ import {
   lineNumbers,
   drawSelection,
   placeholder,
-  highlightActiveLine,
   highlightActiveLineGutter,
   scrollPastEnd,
 } from "@codemirror/view";
@@ -106,7 +105,7 @@ function editorExtensions(
     ...(readOnly
       ? []
       : [
-          highlightActiveLine(),
+          // Gutter only — an idle caret shouldn't wash the current line.
           highlightActiveLineGutter(),
           // yCollab installs its own undo/redo — stacking CM history() on top
           // makes ⌘Z fight itself.
@@ -235,9 +234,6 @@ function editorExtensions(
       "&.cm-focused .cm-activeLineGutter, .cm-activeLineGutter": {
         color: "var(--c-editor-active-line-number)",
         backgroundColor: "transparent",
-      },
-      ".cm-activeLine": {
-        backgroundColor: "var(--c-editor-active-line)",
       },
       ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
         backgroundColor: "var(--c-selection) !important",
