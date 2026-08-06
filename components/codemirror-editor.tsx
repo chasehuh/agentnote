@@ -7,6 +7,7 @@ import {
   lineNumbers,
   drawSelection,
   placeholder,
+  highlightActiveLine,
   highlightActiveLineGutter,
   scrollPastEnd,
 } from "@codemirror/view";
@@ -105,7 +106,8 @@ function editorExtensions(
     ...(readOnly
       ? []
       : [
-          // Gutter only — an idle caret shouldn't wash the current line.
+          // Painted only while focused — see the .cm-activeLine theme rules.
+          highlightActiveLine(),
           highlightActiveLineGutter(),
           // yCollab installs its own undo/redo — stacking CM history() on top
           // makes ⌘Z fight itself.
@@ -234,6 +236,16 @@ function editorExtensions(
       "&.cm-focused .cm-activeLineGutter, .cm-activeLineGutter": {
         color: "var(--c-editor-active-line-number)",
         backgroundColor: "transparent",
+      },
+      // The wash tracks the caret, so it only makes sense while the caret is
+      // visible. Blurred, the line goes back to plain buffer black — which
+      // means explicitly clearing CM's `&light .cm-activeLine` base rule
+      // (#cceeff44), not just leaving the unfocused case unstyled.
+      ".cm-activeLine": {
+        backgroundColor: "transparent",
+      },
+      "&.cm-focused .cm-activeLine": {
+        backgroundColor: "var(--c-editor-active-line)",
       },
       ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
         backgroundColor: "var(--c-selection) !important",

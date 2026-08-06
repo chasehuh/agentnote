@@ -2,14 +2,24 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("active-line chrome", () => {
-  it("never paints a current-line background", () => {
-    const source = readFileSync(
-      `${process.cwd()}/components/codemirror-editor.tsx`,
-      "utf8",
+  const source = readFileSync(
+    `${process.cwd()}/components/codemirror-editor.tsx`,
+    "utf8",
+  );
+
+  it("paints the wash only while the editor is focused", () => {
+    expect(source).toContain("highlightActiveLine(),");
+    expect(source).toContain(
+      `"&.cm-focused .cm-activeLine": {\n        backgroundColor: "var(--c-editor-active-line)",`,
     );
-    // An idle caret should leave the line the same black as the rest of the
-    // buffer — no highlightActiveLine(), no .cm-activeLine wash to theme.
-    expect(source).not.toContain("highlightActiveLine(");
-    expect(source).not.toContain(".cm-activeLine\"");
+  });
+
+  it("clears CM's base active-line wash when blurred", () => {
+    // Without this reset, a blurred line keeps CM's `&light .cm-activeLine`
+    // base colour (#cceeff44) — a pale blue bar, worse than the grey it
+    // replaced. Scoping the paint to :focus alone is not enough.
+    expect(source).toContain(
+      `".cm-activeLine": {\n        backgroundColor: "transparent",`,
+    );
   });
 });

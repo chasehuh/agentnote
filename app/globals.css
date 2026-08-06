@@ -68,6 +68,7 @@
   --c-editor-fg: #d6d6dd;
   --c-editor-line-number: #525252;
   --c-editor-active-line-number: #c6c6c6;
+  --c-editor-active-line: #ffffff08;
   --c-success: #89d185;
   --c-warning: #cca700;
   --c-error: #f14c4c;
