@@ -19,6 +19,7 @@ import {
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { Strikethrough } from "@lezer/markdown";
+import { hiddenMarks, visibleCaretMotion } from "./hidden-marks";
 import { toggleInlineMark } from "./toggle-mark";
 
 const MARK = "~~";
@@ -54,6 +55,9 @@ const hiddenStrikethroughMarks = StateField.define<DecorationSet>({
     EditorView.decorations.from(field),
     // Skip caret into invisible `~~` so arrow keys don't land on hidden marks.
     EditorView.atomicRanges.of((view) => view.state.field(field)),
+    // Skip the markers' boundary positions too — see `visibleCaretMotion`.
+    hiddenMarks.from(field),
+    visibleCaretMotion,
   ],
 });
 

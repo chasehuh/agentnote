@@ -12,6 +12,7 @@ import {
 } from "@codemirror/state";
 import { Decoration, EditorView, type DecorationSet } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import { hiddenMarks, visibleCaretMotion } from "./hidden-marks";
 
 const hideMark = Decoration.replace({});
 
@@ -46,6 +47,9 @@ const hiddenEmphasisMarks = StateField.define<DecorationSet>({
     EditorView.decorations.from(field),
     // Skip caret into invisible markers so arrow keys don't land on them.
     EditorView.atomicRanges.of((view) => view.state.field(field)),
+    // Skip the markers' boundary positions too — see `visibleCaretMotion`.
+    hiddenMarks.from(field),
+    visibleCaretMotion,
   ],
 });
 
