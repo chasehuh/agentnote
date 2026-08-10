@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { CodeMirrorEditor } from "./codemirror-editor";
+import { PoweredBySume } from "./powered-by-sume";
 
 /** Anonymous read-only shell for `/p/{handle}/{token}` — Zed buffer chrome. */
 export function PublicNoteView({
@@ -25,6 +26,7 @@ export function PublicNoteView({
           </span>
         ) : null}
         <div className="zed-titlebar__spacer" />
+        <PoweredBySume className="sume-powered--titlebar" />
         <Link className="zed-titlebar__link" href="/login">
           Sign in
         </Link>

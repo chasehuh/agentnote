@@ -68,6 +68,7 @@ import {
 } from "@/lib/themes";
 import { ARCHIVE_RETENTION_DAYS, daysUntilArchivePurge } from "@/lib/archive";
 import { AccountMenu } from "./account-menu";
+import { PoweredBySume } from "./powered-by-sume";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import { ConfirmDialog } from "./confirm-dialog";
 import {
@@ -1843,6 +1844,9 @@ export function AgentNoteApp({
               ) : null}
             </div>
           ) : null}
+          <div className="zed-panel__footer">
+            <PoweredBySume className="sume-powered--panel" />
+          </div>
         </aside>
 
         <section className="zed-center">
