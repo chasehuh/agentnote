@@ -510,7 +510,7 @@ a.zed-save-error__action {
   color: var(--c-text-muted);
 }
 
-.zed-icon-btn:hover {
+.zed-icon-btn:hover:not(:disabled) {
   background: var(--c-element-hover);
   color: var(--c-text);
 }
