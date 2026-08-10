@@ -6,8 +6,6 @@ import { getPublicNote } from "@/lib/notes";
 import { isValidPublicId, publicNotePath } from "@/lib/public-id";
 import { previewPublicTitle } from "@/lib/public-note-meta";
 
-export const dynamic = "force-dynamic";
-
 type Props = { params: Promise<{ handle: string; token: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {

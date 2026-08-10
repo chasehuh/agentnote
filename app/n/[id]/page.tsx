@@ -4,8 +4,6 @@ import { AgentNoteApp } from "@/components/agentnote-app";
 import { isValidNoteId } from "@/lib/note-id";
 import { listNotes, resolveCanonicalNoteId } from "@/lib/notes";
 
-export const dynamic = "force-dynamic";
-
 export default async function NotePage({
   params,
 }: {

@@ -6,6 +6,10 @@ const buildId =
   "dev";
 
 const nextConfig: NextConfig = {
+  // Instant Navigations: prerender a static App Shell per route and let each
+  // <Link> prefetch that shared shell instead of a per-link page render.
+  cacheComponents: true,
+  partialPrefetching: true,
   // Hide the floating "Rendering..." / "Compiling..." pill in development.
   devIndicators: false,
   env: {

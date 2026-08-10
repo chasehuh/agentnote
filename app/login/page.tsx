@@ -3,8 +3,6 @@ import { redirect } from "next/navigation";
 import { GitHubSignInButton } from "@/components/github-sign-in-button";
 import { PoweredBySume } from "@/components/powered-by-sume";
 
-export const dynamic = "force-dynamic";
-
 export default async function LoginPage() {
   const { userId } = await auth();
   // Defense in depth: proxy already bounces signed-in users off /login.
