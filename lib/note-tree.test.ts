@@ -3,7 +3,7 @@ import {
   ancestorIds,
   collapsibleIds,
   flattenNoteTree,
-  mostRecentRootNote,
+  mostRecentNote,
 } from "./note-tree";
 import type { Note } from "./types";
 
@@ -181,22 +181,22 @@ describe("collapsibleIds", () => {
   });
 });
 
-describe("mostRecentRootNote", () => {
-  it("picks the newest root even when a child is newer", () => {
+describe("mostRecentNote", () => {
+  it("picks the newest note even when it is a nested sub-note", () => {
     const notes = [
       note("root-old", null, 1),
       note("child-hot", "root-old", 9),
       note("root-mid", null, 5),
     ];
-    expect(mostRecentRootNote(notes)?.id).toBe("root-mid");
+    expect(mostRecentNote(notes)?.id).toBe("child-hot");
   });
 
   it("returns null when there are no notes", () => {
-    expect(mostRecentRootNote([])).toBeNull();
+    expect(mostRecentNote([])).toBeNull();
   });
 
-  it("surfaces an orphaned child as a root when its parent is absent", () => {
+  it("includes an orphaned child when its parent is absent", () => {
     const notes = [note("orphan", "missing-parent", 3)];
-    expect(mostRecentRootNote(notes)?.id).toBe("orphan");
+    expect(mostRecentNote(notes)?.id).toBe("orphan");
   });
 });
