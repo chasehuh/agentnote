@@ -773,16 +773,6 @@ a.zed-save-error__action {
   filter: brightness(1.15);
 }
 
-/* Thematic break (`---`) — Live Preview hairline; source stays in the doc. */
-.cm-md-hr {
-  display: block;
-  border: none;
-  border-top: 1px solid var(--c-border);
-  margin: 0.65em 0;
-  height: 0;
-  pointer-events: none;
-}
-
 /* Link unwrapped for editing — raw `[label](url)` chrome, caret not pointer. */
 .cm-md-link-src {
   color: var(--c-text-accent);
