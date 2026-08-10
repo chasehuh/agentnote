@@ -47,14 +47,13 @@ function indexByParent(notes: Note[]) {
 }
 
 /**
- * Default landing note: newest *root* (not a nested sub-note).
- *
- * A child with a missing/archived parent surfaces as a root via
- * `indexByParent` — same rule as the sidebar — so landing never opens a
- * note that still nests under a visible parent.
+ * Default landing / fallback note: truly newest by `updated_at`, including
+ * nested sub-notes. Sidebar auto-reveal (via `ancestorIds`) expands parents
+ * when the landing target is nested.
  */
-export function mostRecentRootNote(notes: Note[]): Note | null {
-  return indexByParent(notes).roots[0] ?? null;
+export function mostRecentNote(notes: Note[]): Note | null {
+  if (notes.length === 0) return null;
+  return [...notes].sort(byRecent)[0] ?? null;
 }
 
 /**

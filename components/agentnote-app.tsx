@@ -21,7 +21,7 @@ import {
   ancestorIds,
   collapsibleIds,
   flattenNoteTree,
-  mostRecentRootNote,
+  mostRecentNote,
   type NoteTreeRow,
 } from "@/lib/note-tree";
 import { allTags, noteHasTag } from "@/lib/tags";
@@ -179,8 +179,8 @@ function resolveInitialNote(
     const match = notes.find((note) => note.id === initialSelectedId);
     if (match) return match;
   }
-  // Home / empty deep-link: newest root only — never open a nested sub-note.
-  return mostRecentRootNote(notes);
+  // Home / empty deep-link: newest note by updated_at (includes sub-notes).
+  return mostRecentNote(notes);
 }
 
 function notePath(id: string | null) {
@@ -1148,7 +1148,7 @@ export function AgentNoteApp({
           !remoteIds.has(activeIdRef.current)
         ) {
           const fallback =
-            mostRecentRootNote(remoteNotes) ??
+            mostRecentNote(remoteNotes) ??
             sortNotesByRecent(remoteNotes)[0] ??
             null;
           if (fallback) {
@@ -1192,7 +1192,7 @@ export function AgentNoteApp({
             prev.filter((note) => note.id !== message.note.id),
           );
           if (activeIdRef.current === message.note.id) {
-            const fallback = mostRecentRootNote(next) ?? next[0] ?? null;
+            const fallback = mostRecentNote(next) ?? next[0] ?? null;
             skipNextSave.current = true;
             if (fallback) {
               const nextBody = substituteAsciiArrows(fallback.body).text;
@@ -1235,7 +1235,7 @@ export function AgentNoteApp({
             prev.filter((note) => note.id !== message.id),
           );
           if (activeIdRef.current === message.id) {
-            const fallback = mostRecentRootNote(next) ?? next[0] ?? null;
+            const fallback = mostRecentNote(next) ?? next[0] ?? null;
             skipNextSave.current = true;
             if (fallback) {
               const nextBody = substituteAsciiArrows(fallback.body).text;
@@ -1408,7 +1408,7 @@ export function AgentNoteApp({
       );
       setNotes(remaining);
       if (wasActive) {
-        const fallback = mostRecentRootNote(remaining) ?? remaining[0] ?? null;
+        const fallback = mostRecentNote(remaining) ?? remaining[0] ?? null;
         if (fallback) {
           await selectNote(fallback, { skipFlush: true });
         } else {
