@@ -3,6 +3,7 @@
 import { useClerk, useUser } from "@clerk/nextjs";
 import { useEffect, useId, useRef, useState } from "react";
 import { SettingsIcon, SignOutIcon } from "./icons";
+import { PoweredBySume } from "./powered-by-sume";
 
 export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { user, isLoaded } = useUser();
@@ -99,6 +100,10 @@ export function AccountMenu({ onOpenSettings }: { onOpenSettings: () => void }) 
               <SignOutIcon size={14} />
               <span>Sign out</span>
             </button>
+          </div>
+
+          <div className="zed-account__footer">
+            <PoweredBySume className="sume-powered--menu" />
           </div>
         </div>
       ) : null}

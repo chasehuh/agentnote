@@ -7,6 +7,7 @@ import {
   type ThemeId,
   type ThemeDefinition,
 } from "@/lib/themes";
+import { PoweredBySume } from "./powered-by-sume";
 
 function ThemeSwatch({
   theme,
@@ -146,6 +147,10 @@ export function SettingsPanel({
             </div>
           </section>
         </div>
+
+        <footer className="agentnote-settings__footer">
+          <PoweredBySume />
+        </footer>
       </div>
     </div>
   );

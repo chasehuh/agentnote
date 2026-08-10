@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { GitHubSignInButton } from "@/components/github-sign-in-button";
+import { PoweredBySume } from "@/components/powered-by-sume";
 
 export const dynamic = "force-dynamic";
 
@@ -13,12 +14,15 @@ export default async function LoginPage() {
 
   return (
     <main className="zed-login">
-      <div className="zed-dialog">
-        <h1 className="zed-dialog__title">agentnote</h1>
-        <p className="zed-dialog__desc">
-          Sign in with GitHub to unlock your notes.
-        </p>
-        <GitHubSignInButton />
+      <div className="zed-login__stack">
+        <div className="zed-dialog">
+          <h1 className="zed-dialog__title">agentnote</h1>
+          <p className="zed-dialog__desc">
+            Sign in with GitHub to unlock your notes.
+          </p>
+          <GitHubSignInButton />
+        </div>
+        <PoweredBySume className="sume-powered--login" />
       </div>
     </main>
   );
