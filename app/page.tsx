@@ -4,8 +4,6 @@ import { AgentNoteApp } from "@/components/agentnote-app";
 import { mostRecentNote } from "@/lib/note-tree";
 import { listNotes } from "@/lib/notes";
 
-export const dynamic = "force-dynamic";
-
 export default async function HomePage() {
   const { userId } = await auth();
   if (!userId) {

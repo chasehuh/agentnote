@@ -6,8 +6,6 @@ import {
 } from "@/lib/media";
 import { requireUserId } from "@/lib/require-user";
 
-export const runtime = "nodejs";
-
 export async function POST(request: Request) {
   const authResult = await requireUserId();
   if ("error" in authResult) return authResult.error;
