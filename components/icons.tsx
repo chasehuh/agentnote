@@ -132,6 +132,28 @@ export function SidebarLeftOpenIcon({ size = 14, className }: IconProps) {
   );
 }
 
+/** `download.svg` — Zed's `IconName::Download`. */
+export function DownloadIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <path
+        d="M13 9.667v2.222A1.111 1.111 0 0 1 11.889 13H4.11A1.111 1.111 0 0 1 3 11.889V9.667M5.222 6.889 8 9.667l2.778-2.778M8 9.667V3"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** Minimal log-out mark (arrow from door) for account menu */
 export function SignOutIcon({ size = 14, className }: IconProps) {
   return (

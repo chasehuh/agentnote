@@ -16,6 +16,7 @@ import {
   type NoteDocProjection,
 } from "@/lib/crdt/use-note-doc";
 import { crdtSyncChrome } from "@/lib/crdt/sync-chrome";
+import { downloadNoteMarkdown } from "@/lib/export-markdown";
 import { deriveNoteTitle } from "@/lib/note-title";
 import {
   ancestorIds,
@@ -73,6 +74,7 @@ import { CodeMirrorEditor } from "./codemirror-editor";
 import { ConfirmDialog } from "./confirm-dialog";
 import {
   ChevronRightIcon,
+  DownloadIcon,
   PlusIcon,
   SidebarLeftClosedIcon,
   SidebarLeftOpenIcon,
@@ -1479,6 +1481,9 @@ export function AgentNoteApp({
     ? previewTitle({ title: deriveNoteTitle(displayBody), body: displayBody })
     : "agentnote";
 
+  /** An empty buffer has no file worth downloading — grey the control out. */
+  const canExport = Boolean(activeId) && displayBody.trim().length > 0;
+
   /**
    * CRDT sync status — muted titlebar chrome, left of Publish. Its states are
    * all recoverable-by-waiting, so they deliberately do NOT reuse the red
@@ -1597,6 +1602,21 @@ export function AgentNoteApp({
             ) : null}
           </div>
         ) : null}
+        {/* Exports the buffer the user is looking at, not the sidebar row. */}
+        <button
+          type="button"
+          className="zed-icon-btn"
+          onClick={() => {
+            if (activeId) downloadNoteMarkdown(displayBody, activeId);
+          }}
+          disabled={!canExport}
+          title={
+            canExport ? "Export as Markdown" : "Open a note to export Markdown"
+          }
+          aria-label="Export as Markdown"
+        >
+          <DownloadIcon size={14} />
+        </button>
         <button
           type="button"
           className="zed-titlebar__publish"
