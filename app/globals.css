@@ -779,20 +779,35 @@ a.zed-save-error__action {
 }
 
 /*
- * Thematic break (`---`) — Live Preview hairline.
- * Source stays in the doc; a block widget replaces paint so Lilex calt
- * cannot ligature the dashes into a soft-wrapping em-dash.
+ * Divider line of exactly two hyphens.
+ *
+ * Lilex `calt` chains three or more hyphens into `hyphen_start/middle/end.seq`
+ * — glyphs whose ink overhangs the character cell — so `---` already paints as
+ * one continuous stroke. Two hyphens shape to `hyphen.spacer` +
+ * `hyphen_hyphen.liga`, which is drawn as two separate contours and reads as a
+ * broken line. Overlay the three-hyphen stroke, squeezed onto the two cells
+ * the source occupies, so both dividers look the same. Paint only — the
+ * document still holds two `-` characters and the caret still sees two cells.
  */
-.cm-md-hr {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  height: 1px;
-  margin: 11.5px 0;
-  padding: 0;
-  border: 0;
-  background: var(--c-border);
-  font-variant-ligatures: none;
+.cm-md-dash-join {
+  position: relative;
+  color: transparent;
+}
+
+.cm-md-dash-join::before {
+  content: "---";
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: var(--c-editor-fg);
+  /*
+   * The containing block is the 2ch inline span, so the three hyphens have to
+   * be held on one line before being squeezed back onto those two cells.
+   */
+  width: 3ch;
+  white-space: pre;
+  transform: scaleX(0.6667);
+  transform-origin: left center;
   pointer-events: none;
 }
 

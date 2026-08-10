@@ -25,8 +25,8 @@ import type * as Y from "yjs";
 import { applyExternalValue } from "@/lib/editor/apply-external";
 import { arrowInputHandler, arrowPasteFilter } from "@/lib/editor/arrow-input";
 import { agentnoteBoldKeymap } from "@/lib/editor/bold";
+import { agentnoteDashJoin } from "@/lib/editor/dash-join";
 import { agentnoteEmphasisHighlight } from "@/lib/editor/emphasis";
-import { agentnoteHorizontalRule } from "@/lib/editor/horizontal-rule";
 import { imageWidgets } from "@/lib/editor/image-widgets";
 import { agentnoteLinks } from "@/lib/editor/links";
 import { videoWidgets } from "@/lib/editor/video-widgets";
@@ -119,7 +119,7 @@ function editorExtensions(
     markdown({ extensions: agentnoteStrikethroughMarkdown }),
     agentnoteStrikethroughHighlight(),
     agentnoteEmphasisHighlight(),
-    agentnoteHorizontalRule(),
+    agentnoteDashJoin(),
     placeholder(placeholderText),
     indentUnit.of(LIST_INDENT_UNIT),
     EditorState.readOnly.of(readOnly),
