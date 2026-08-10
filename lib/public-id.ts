@@ -21,8 +21,10 @@ export function normalizePublicId(id: string): string | null {
 }
 
 /**
- * Canonical public path. Prefers `/p/{handle}/{noteId}` when a handle exists;
- * falls back to `/p/{noteId}`. `noteId` matches the private note id.
+ * Canonical public path. Always prefer `/p/{handle}/{noteId}` when a handle
+ * exists; fall back to `/p/{noteId}` only when publish stamped no handle.
+ * Both shapes are served by `app/p/[...parts]` (a single catch-all — Next.js
+ * cannot host `/p/[token]` and `/p/[handle]/[token]` side by side).
  */
 export function publicNotePath(
   noteId: string,
