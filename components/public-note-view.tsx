@@ -4,7 +4,7 @@ import Link from "next/link";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import { PoweredBySume } from "./powered-by-sume";
 
-/** Anonymous read-only shell for `/p/{handle}/{token}` — Zed buffer chrome. */
+/** Anonymous read-only shell for `/p/…` public notes — Zed buffer chrome. */
 export function PublicNoteView({
   title,
   body,
