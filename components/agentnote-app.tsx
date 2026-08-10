@@ -17,7 +17,7 @@ import {
 } from "@/lib/crdt/use-note-doc";
 import { crdtSyncChrome } from "@/lib/crdt/sync-chrome";
 import { downloadNoteMarkdown } from "@/lib/export-markdown";
-import { deriveNoteTitle } from "@/lib/note-title";
+import { deriveNoteTitle, displayNoteTitle } from "@/lib/note-title";
 import {
   ancestorIds,
   collapsibleIds,
@@ -109,10 +109,10 @@ function isNarrowViewport() {
 }
 
 function previewTitle(note: Pick<Note, "title" | "body">) {
-  const fromTitle = note.title.trim();
+  const fromTitle = displayNoteTitle(note.title);
   if (fromTitle) return fromTitle;
   const firstLine = note.body.split("\n").find((line) => line.trim());
-  return firstLine?.trim() || "Untitled";
+  return displayNoteTitle(firstLine ?? "") || "Untitled";
 }
 
 function sortNotesByRecent(notes: Note[]) {

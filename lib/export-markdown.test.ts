@@ -14,6 +14,12 @@ describe("noteMarkdownFile", () => {
     );
   });
 
+  it("drops a bold wrap around the title", () => {
+    expect(noteMarkdownFile("# **Weekly review**\nbody", "abc").filename).toBe(
+      "Weekly-review.md",
+    );
+  });
+
   it("keeps non-ASCII titles instead of slugging them away", () => {
     expect(noteMarkdownFile("회의 메모\n내용", "abc").filename).toBe(
       "회의-메모.md",
