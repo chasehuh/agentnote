@@ -778,6 +778,24 @@ a.zed-save-error__action {
   filter: brightness(1.15);
 }
 
+/*
+ * Thematic break (`---`) — Live Preview hairline.
+ * Source stays in the doc; a block widget replaces paint so Lilex calt
+ * cannot ligature the dashes into a soft-wrapping em-dash.
+ */
+.cm-md-hr {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 1px;
+  margin: 11.5px 0;
+  padding: 0;
+  border: 0;
+  background: var(--c-border);
+  font-variant-ligatures: none;
+  pointer-events: none;
+}
+
 /* Link unwrapped for editing — raw `[label](url)` chrome, caret not pointer. */
 .cm-md-link-src {
   color: var(--c-text-accent);
