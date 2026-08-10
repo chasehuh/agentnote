@@ -1,4 +1,4 @@
-import { deriveNoteTitle } from "./note-title";
+import { deriveNoteTitle, displayNoteTitle } from "./note-title";
 
 /** Path separators, Windows-reserved punctuation, and control characters. */
 // eslint-disable-next-line no-control-regex
@@ -13,9 +13,9 @@ const MAX_BASENAME = 80;
  * down to `[a-z0-9]` would leave every one of them empty.
  */
 export function noteMarkdownFile(body: string, noteId: string) {
-  const base = deriveNoteTitle(body)
-    // Most notes open on an ATX heading; `#-Weekly-review.md` reads badly.
-    .replace(/^#{1,6}\s+/, "")
+  // Most notes open on an ATX heading or a bold line; `#-**Weekly-review**.md`
+  // reads badly, and the sidebar shows the same stripped title.
+  const base = displayNoteTitle(deriveNoteTitle(body))
     .replace(UNSAFE, " ")
     .trim()
     .slice(0, MAX_BASENAME)
