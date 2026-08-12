@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { Note } from "@/lib/types";
 import { substituteAsciiArrows } from "@/lib/arrows";
@@ -27,11 +28,17 @@ import {
 } from "@/lib/note-tree";
 import { allTags, noteHasTag } from "@/lib/tags";
 import {
+  DEFAULT_SIDEBAR_WIDTH,
   DEFAULT_WRAP,
+  SIDEBAR_WIDTH_STORAGE_KEY,
   TREE_COLLAPSED_STORAGE_KEY,
   WRAP_STORAGE_KEY,
+  clampSidebarWidth,
   isWrapPreference,
   parseCollapsedIds,
+  parseSidebarWidth,
+  sidebarSegmentForShortcut,
+  type SidebarSegment,
 } from "@/lib/preferences";
 import { bodyFingerprint } from "@/lib/body-fingerprint";
 import {
@@ -106,6 +113,18 @@ function isNarrowViewport() {
   return (
     typeof window !== "undefined" && window.matchMedia(NARROW_QUERY).matches
   );
+}
+
+/**
+ * Focus is somewhere the user is typing prose — a title field, a search box, a
+ * `contenteditable`. CodeMirror is excluded on purpose: it owns its own keymap,
+ * and ⌘1 / ⌘2 mean nothing inside the buffer.
+ */
+function isPlainTextEntry(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.closest(".cm-editor")) return false;
+  if (target.isContentEditable) return true;
+  return target.tagName === "INPUT" || target.tagName === "TEXTAREA";
 }
 
 function previewTitle(note: Pick<Note, "title" | "body">) {
@@ -228,7 +247,6 @@ export function AgentNoteApp({
   const { getToken } = useAuth();
   const [notes, setNotes] = useState(() => sortNotesByRecent(initialNotes));
   const [archivedNotes, setArchivedNotes] = useState<Note[]>([]);
-  const [archivedOpen, setArchivedOpen] = useState(false);
   const [pendingArchive, setPendingArchive] = useState<Note | null>(null);
   const [pendingPermanent, setPendingPermanent] = useState<Note | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
@@ -244,6 +262,21 @@ export function AgentNoteApp({
     null,
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  /** Which sidebar list is showing. Session-local: a reload always lands on Notes. */
+  const [sidebarSegment, setSidebarSegment] = useState<SidebarSegment>("notes");
+  /**
+   * Panel width while open. Server-rendered at the default and restored from
+   * `localStorage` in the preferences effect, so SSR and the first client paint
+   * agree; the drag itself reads through `sidebarWidthRef`.
+   */
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const sidebarWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
+  const [resizing, setResizing] = useState(false);
+  const resizeDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
   /** Active `#tag` sidebar filter. Null = show everything. */
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   /**
@@ -574,6 +607,85 @@ export function AgentNoteApp({
     );
     collapsedRef.current = restored;
     setCollapsed(restored);
+    // Re-clamped against this window, so a width dragged on an external monitor
+    // does not come back oversized on the laptop screen.
+    const width = parseSidebarWidth(
+      window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY),
+      window.innerWidth,
+    );
+    sidebarWidthRef.current = width;
+    setSidebarWidth(width);
+  }, []);
+
+  const applySidebarWidth = useCallback((px: number) => {
+    const next = clampSidebarWidth(px, window.innerWidth);
+    if (next === sidebarWidthRef.current) return;
+    sidebarWidthRef.current = next;
+    setSidebarWidth(next);
+  }, []);
+
+  /**
+   * Right-edge drag resize.
+   *
+   * Pointer capture keeps the move/up events on the handle even when the cursor
+   * outruns it over the editor, so there is no window-level listener to leak.
+   * The width is persisted once on release rather than on every move.
+   */
+  const startSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      // Phone widths already give the panel the whole screen and auto-close it
+      // on select; dragging its edge there has nothing to trade against.
+      if (event.button !== 0 || isNarrowViewport()) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      resizeDragRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startWidth: sidebarWidthRef.current,
+      };
+      setResizing(true);
+    },
+    [],
+  );
+
+  const moveSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = resizeDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      applySidebarWidth(drag.startWidth + (event.clientX - drag.startX));
+    },
+    [applySidebarWidth],
+  );
+
+  const endSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = resizeDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      resizeDragRef.current = null;
+      setResizing(false);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      window.localStorage.setItem(
+        SIDEBAR_WIDTH_STORAGE_KEY,
+        String(sidebarWidthRef.current),
+      );
+    },
+    [],
+  );
+
+  const resetSidebarWidth = useCallback(() => {
+    applySidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+    window.localStorage.setItem(
+      SIDEBAR_WIDTH_STORAGE_KEY,
+      String(sidebarWidthRef.current),
+    );
+  }, [applySidebarWidth]);
+
+  /** Mod+1 / Mod+2: reveal the sidebar on the chosen segment. */
+  const showSidebarSegment = useCallback((segment: SidebarSegment) => {
+    setSidebarOpen(true);
+    setSidebarSegment(segment);
   }, []);
 
   /**
@@ -1424,7 +1536,9 @@ export function AgentNoteApp({
           ...prev.filter((note) => note.id !== id),
         ]),
       );
-      setArchivedOpen(true);
+      // Deliberately stays on Notes: the Archived tab's count badge is where
+      // the note went, and yanking the panel out from under the user after
+      // every archive would cost more than the reveal is worth.
     } finally {
       setConfirmBusy(false);
       setPendingArchive(null);
@@ -1524,6 +1638,13 @@ export function AgentNoteApp({
     });
   }, [activeId, notes, applyCollapsed]);
 
+  /** Any dialog layered over the workspace swallows the segment shortcuts. */
+  const modalOpen =
+    settingsOpen ||
+    publishOpen ||
+    pendingArchive !== null ||
+    pendingPermanent !== null;
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const meta = event.metaKey || event.ctrlKey;
@@ -1556,13 +1677,24 @@ export function AgentNoteApp({
         event.preventDefault();
         setSidebarOpen((value) => !value);
       }
+      // ⌘1 / ⌘2 switch the sidebar segment. Chromium and Safari usually keep
+      // these for their own tab switching on the web, so the tab strip is the
+      // always-available path; this binding is what a Tauri shell or a host
+      // that does not steal the chord gets (issue #108, accepted limitation).
+      if (meta && !modalOpen && !isPlainTextEntry(event.target)) {
+        const segment = sidebarSegmentForShortcut(event);
+        if (segment) {
+          event.preventDefault();
+          showSidebarSegment(segment);
+        }
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createNote, applyCollapsed]);
+  }, [createNote, applyCollapsed, modalOpen, showSidebarSegment]);
 
   return (
-    <div className="zed-shell">
+    <div className="zed-shell" data-resizing={resizing ? "true" : undefined}>
       {/* Zed-like chrome: full-width titlebar; left dock toggle (⌘⇧B) */}
       <header className="zed-titlebar">
         <button
@@ -1685,22 +1817,103 @@ export function AgentNoteApp({
           data-open={sidebarOpen}
           aria-hidden={!sidebarOpen}
           inert={!sidebarOpen ? true : undefined}
+          // Collapsed still means width 0 — the CSS var only drives the open
+          // state, so reopening restores the dragged width.
+          style={{ "--c-panel-w": `${sidebarWidth}px` } as CSSProperties}
         >
           <div className="zed-panel__header">
-            <span className="zed-panel__title">Notes</span>
-            <div className="zed-panel__actions">
+            <div
+              className="zed-panel__segments"
+              role="tablist"
+              aria-label="Sidebar sections"
+            >
               <button
                 type="button"
-                className="zed-icon-btn"
-                onClick={() => void createNote()}
-                title="New note (⌘N)"
-                aria-label="New note"
+                role="tab"
+                className="zed-panel__segment"
+                data-active={sidebarSegment === "notes" ? "true" : undefined}
+                aria-selected={sidebarSegment === "notes"}
+                onClick={() => setSidebarSegment("notes")}
+                title="Notes (⌘1)"
               >
-                <PlusIcon size={14} />
+                Notes
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className="zed-panel__segment"
+                data-active={sidebarSegment === "archived" ? "true" : undefined}
+                aria-selected={sidebarSegment === "archived"}
+                onClick={() => setSidebarSegment("archived")}
+                title="Archived (⌘2)"
+              >
+                Archived
+                {archivedNotes.length > 0 ? (
+                  <span className="zed-panel__segment-count">
+                    {archivedNotes.length}
+                  </span>
+                ) : null}
               </button>
             </div>
+            <div className="zed-panel__actions">
+              {sidebarSegment === "notes" ? (
+                <button
+                  type="button"
+                  className="zed-icon-btn"
+                  onClick={() => void createNote()}
+                  title="New note (⌘N)"
+                  aria-label="New note"
+                >
+                  <PlusIcon size={14} />
+                </button>
+              ) : null}
+            </div>
           </div>
-          {availableTags.length > 0 ? (
+          {sidebarSegment === "archived" ? (
+            <div className="zed-panel__archived-list">
+              {archivedNotes.length === 0 ? (
+                <p className="zed-panel__empty">No archived notes</p>
+              ) : (
+                archivedNotes.map((note) => {
+                  const daysLeft = note.deleted_at
+                    ? daysUntilArchivePurge(note.deleted_at)
+                    : ARCHIVE_RETENTION_DAYS;
+                  return (
+                    <div key={note.id} className="zed-note-item">
+                      <div
+                        className="zed-note-item__hit"
+                        style={{ cursor: "default" }}
+                      >
+                        <span className="zed-note-item__title">
+                          {previewTitle(note)}
+                        </span>
+                        <span className="zed-note-item__meta">
+                          Deletes in {daysLeft}d
+                        </span>
+                      </div>
+                      <div className="zed-note-item__actions">
+                        <button
+                          type="button"
+                          className="zed-note-item__restore"
+                          onClick={() => void restoreArchived(note)}
+                        >
+                          Restore
+                        </button>
+                        <button
+                          type="button"
+                          className="zed-note-item__purge"
+                          onClick={() => requestPermanentDelete(note)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          ) : null}
+          {sidebarSegment === "notes" && availableTags.length > 0 ? (
             <div className="zed-panel__tags">
               {availableTags.map((tag) => (
                 <button
@@ -1721,152 +1934,117 @@ export function AgentNoteApp({
               ))}
             </div>
           ) : null}
-          <nav className="zed-panel__list">
-            {sidebarRows.length === 0 ? (
-              <p className="zed-panel__empty">
-                {tagFilter ? `No notes tagged #${tagFilter}` : "No notes yet"}
-              </p>
-            ) : (
-              sidebarRows.map(({ note, depth, hasChildren, expanded }) => {
-                const active = note.id === activeId;
-                const label =
-                  note.id === activeId
-                    ? previewTitle({
-                        title: deriveNoteTitle(displayBody),
-                        body: displayBody,
-                      })
-                    : previewTitle(note);
-                const updatedLabel =
-                  note.id === activeId && displaySaveState === "error"
-                    ? CRDT_ENABLED
-                      ? "Offline"
-                      : "Not saved"
-                    : note.id === activeId &&
-                        (displaySaveState === "dirty" ||
-                          displaySaveState === "saving")
-                      ? "Just now"
-                      : formatUpdatedAt(note.updated_at);
-                return (
-                  <div
-                    key={note.id}
-                    className="zed-note-item"
-                    data-active={active}
-                    style={{ "--depth": depth } as CSSProperties}
-                  >
-                    <button
-                      type="button"
-                      className="zed-note-item__hit"
-                      onClick={() => void selectNote(note)}
-                      // Zed project-panel arrows: → opens a row, ← closes it.
-                      onKeyDown={(event) => {
-                        if (!hasChildren) return;
-                        if (event.key === "ArrowRight" && !expanded) {
-                          event.preventDefault();
-                          toggleCollapsed(note.id);
-                        }
-                        if (event.key === "ArrowLeft" && expanded) {
-                          event.preventDefault();
-                          toggleCollapsed(note.id);
-                        }
-                      }}
+          {sidebarSegment === "notes" ? (
+            <nav className="zed-panel__list">
+              {sidebarRows.length === 0 ? (
+                <p className="zed-panel__empty">
+                  {tagFilter ? `No notes tagged #${tagFilter}` : "No notes yet"}
+                </p>
+              ) : (
+                sidebarRows.map(({ note, depth, hasChildren, expanded }) => {
+                  const active = note.id === activeId;
+                  const label =
+                    note.id === activeId
+                      ? previewTitle({
+                          title: deriveNoteTitle(displayBody),
+                          body: displayBody,
+                        })
+                      : previewTitle(note);
+                  const updatedLabel =
+                    note.id === activeId && displaySaveState === "error"
+                      ? CRDT_ENABLED
+                        ? "Offline"
+                        : "Not saved"
+                      : note.id === activeId &&
+                          (displaySaveState === "dirty" ||
+                            displaySaveState === "saving")
+                        ? "Just now"
+                        : formatUpdatedAt(note.updated_at);
+                  return (
+                    <div
+                      key={note.id}
+                      className="zed-note-item"
+                      data-active={active}
+                      style={{ "--depth": depth } as CSSProperties}
                     >
-                      <span
-                        className="zed-note-item__title"
-                        data-public={note.is_public ? "true" : undefined}
-                      >
-                        {label}
-                      </span>
-                      <span className="zed-note-item__date">{updatedLabel}</span>
-                    </button>
-                    {hasChildren ? (
                       <button
                         type="button"
-                        className="zed-note-item__chevron"
-                        data-expanded={expanded ? "true" : undefined}
+                        className="zed-note-item__hit"
+                        onClick={() => void selectNote(note)}
+                        // Zed project-panel arrows: → opens a row, ← closes it.
+                        onKeyDown={(event) => {
+                          if (!hasChildren) return;
+                          if (event.key === "ArrowRight" && !expanded) {
+                            event.preventDefault();
+                            toggleCollapsed(note.id);
+                          }
+                          if (event.key === "ArrowLeft" && expanded) {
+                            event.preventDefault();
+                            toggleCollapsed(note.id);
+                          }
+                        }}
+                      >
+                        <span
+                          className="zed-note-item__title"
+                          data-public={note.is_public ? "true" : undefined}
+                        >
+                          {label}
+                        </span>
+                        <span className="zed-note-item__date">{updatedLabel}</span>
+                      </button>
+                      {hasChildren ? (
+                        <button
+                          type="button"
+                          className="zed-note-item__chevron"
+                          data-expanded={expanded ? "true" : undefined}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleCollapsed(note.id);
+                          }}
+                          aria-expanded={expanded}
+                          aria-label={
+                            expanded ? "Collapse sub-notes" : "Expand sub-notes"
+                          }
+                          title={
+                            expanded ? "Collapse sub-notes" : "Expand sub-notes"
+                          }
+                        >
+                          <ChevronRightIcon size={12} />
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="zed-note-item__delete"
                         onClick={(event) => {
                           event.stopPropagation();
-                          toggleCollapsed(note.id);
+                          requestArchive(note);
                         }}
-                        aria-expanded={expanded}
-                        aria-label={
-                          expanded ? "Collapse sub-notes" : "Expand sub-notes"
-                        }
-                        title={
-                          expanded ? "Collapse sub-notes" : "Expand sub-notes"
-                        }
+                        aria-label="Archive note"
                       >
-                        <ChevronRightIcon size={12} />
+                        ×
                       </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="zed-note-item__delete"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        requestArchive(note);
-                      }}
-                      aria-label="Archive note"
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </nav>
-          {archivedNotes.length > 0 ? (
-            <div className="zed-panel__archived">
-              <button
-                type="button"
-                className="zed-panel__archived-toggle"
-                onClick={() => setArchivedOpen((value) => !value)}
-                aria-expanded={archivedOpen}
-              >
-                <span>Archived</span>
-                <span>{archivedNotes.length}</span>
-              </button>
-              {archivedOpen ? (
-                <div className="zed-panel__archived-list">
-                  {archivedNotes.map((note) => {
-                    const daysLeft = note.deleted_at
-                      ? daysUntilArchivePurge(note.deleted_at)
-                      : ARCHIVE_RETENTION_DAYS;
-                    return (
-                      <div key={note.id} className="zed-note-item">
-                        <div className="zed-note-item__hit" style={{ cursor: "default" }}>
-                          <span className="zed-note-item__title">
-                            {previewTitle(note)}
-                          </span>
-                          <span className="zed-note-item__meta">
-                            Deletes in {daysLeft}d
-                          </span>
-                        </div>
-                        <div className="zed-note-item__actions">
-                          <button
-                            type="button"
-                            className="zed-note-item__restore"
-                            onClick={() => void restoreArchived(note)}
-                          >
-                            Restore
-                          </button>
-                          <button
-                            type="button"
-                            className="zed-note-item__purge"
-                            onClick={() => requestPermanentDelete(note)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
+                    </div>
+                  );
+                })
+              )}
+            </nav>
           ) : null}
           <div className="zed-panel__footer">
             <PoweredBySume className="sume-powered--panel" />
           </div>
+          {/* Right-edge drag handle. Wider hit area than the hairline it draws. */}
+          <div
+            className="zed-panel__resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            title="Drag to resize · double-click to reset"
+            onPointerDown={startSidebarResize}
+            onPointerMove={moveSidebarResize}
+            onPointerUp={endSidebarResize}
+            onPointerCancel={endSidebarResize}
+            onDoubleClick={resetSidebarWidth}
+          />
         </aside>
 
         <section className="zed-center">
