@@ -666,6 +666,33 @@ a.zed-save-error__action {
   background: var(--c-element-selected);
 }
 
+/* Drag to reorder. The row being carried stays visible but recedes, so the
+   drop indicator is the only thing competing for attention. */
+.zed-note-item[data-dragging="true"] {
+  opacity: 0.4;
+}
+
+/* Insertion line, drawn on the row the pointer is over rather than as a gap:
+   a 24px row has no room to open one without the whole list jumping. */
+.zed-note-item[data-drop]::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  left: calc(4px + var(--depth, 0) * 12px);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--c-text-accent);
+  pointer-events: none;
+}
+
+.zed-note-item[data-drop="before"]::after {
+  top: -1px;
+}
+
+.zed-note-item[data-drop="after"]::after {
+  bottom: -1px;
+}
+
 /* Single-line entry at Zed project-panel density: ~24px tall, title only. */
 .zed-note-item__hit {
   display: block;

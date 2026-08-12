@@ -45,6 +45,7 @@ const serverNote = {
   created_at: UPDATED_AT,
   updated_at: UPDATED_AT,
   deleted_at: null,
+  sort_order: 1,
   is_public: false,
   public_id: null,
   published_at: null,

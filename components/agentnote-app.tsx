@@ -22,10 +22,20 @@ import { deriveNoteTitle, displayNoteTitle } from "@/lib/note-title";
 import {
   ancestorIds,
   collapsibleIds,
+  effectiveParentId,
+  firstNoteInOrder,
   flattenNoteTree,
-  mostRecentNote,
+  siblingIds,
   type NoteTreeRow,
 } from "@/lib/note-tree";
+import {
+  applyServerOrder,
+  applySiblingOrder,
+  reorderSiblingIds,
+  sortNotesByOrder,
+  upsertNoteInOrder,
+  type DropPlace,
+} from "@/lib/note-order";
 import { allTags, noteHasTag } from "@/lib/tags";
 import {
   DEFAULT_DIGIT_SHORTCUTS,
@@ -136,13 +146,6 @@ function previewTitle(note: Pick<Note, "title" | "body">) {
   return displayNoteTitle(firstLine ?? "") || "Untitled";
 }
 
-function sortNotesByRecent(notes: Note[]) {
-  return [...notes].sort(
-    (a, b) =>
-      new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-  );
-}
-
 function sortArchivedByDeleted(notes: Note[]) {
   return [...notes].sort((a, b) => {
     const aMs = a.deleted_at ? new Date(a.deleted_at).getTime() : 0;
@@ -159,8 +162,8 @@ function resolveInitialNote(
     const match = notes.find((note) => note.id === initialSelectedId);
     if (match) return match;
   }
-  // Home / empty deep-link: newest note by updated_at (includes sub-notes).
-  return mostRecentNote(notes);
+  // Home / empty deep-link: the top row of the sidebar.
+  return firstNoteInOrder(notes);
 }
 
 function notePath(id: string | null) {
@@ -203,7 +206,7 @@ export function AgentNoteApp({
   // Realtime handshake token. Clerk rotates it, so the provider re-reads it on
   // every (re)connect rather than holding one.
   const { getToken } = useAuth();
-  const [notes, setNotes] = useState(() => sortNotesByRecent(initialNotes));
+  const [notes, setNotes] = useState(() => sortNotesByOrder(initialNotes));
   const [archivedNotes, setArchivedNotes] = useState<Note[]>([]);
   const [pendingArchive, setPendingArchive] = useState<Note | null>(null);
   const [pendingPermanent, setPendingPermanent] = useState<Note | null>(null);
@@ -340,15 +343,12 @@ export function AgentNoteApp({
       ) {
         return prev;
       }
-      return sortNotesByRecent([
-        {
-          ...current,
-          title: deriveNoteTitle(projection.body),
-          body: projection.body,
-          updated_at: projection.updatedAt,
-        },
-        ...prev.filter((item) => item.id !== projection.noteId),
-      ]);
+      return upsertNoteInOrder(prev, {
+        ...current,
+        title: deriveNoteTitle(projection.body),
+        body: projection.body,
+        updated_at: projection.updatedAt,
+      });
     });
     if (activeIdRef.current === projection.noteId) {
       // Keep the legacy tokens coherent so publish/archive still work.
@@ -392,12 +392,7 @@ export function AgentNoteApp({
       return;
     }
 
-    setNotes((prev) =>
-      sortNotesByRecent([
-        note,
-        ...prev.filter((item) => item.id !== note.id),
-      ]),
-    );
+    setNotes((prev) => upsertNoteInOrder(prev, note));
 
     if (activeIdRef.current !== note.id) return;
     // CRDT-backed body is owned by the Y.Doc — the list row may advance, the
@@ -477,14 +472,11 @@ export function AgentNoteApp({
         if (!current) return prev;
         // Do not inject client-clock `at` into updated_at — that lets a
         // skewed peer look newer than a real server save (issue #51).
-        return sortNotesByRecent([
-          {
-            ...current,
-            title: payload.title,
-            body: nextBody,
-          },
-          ...prev.filter((item) => item.id !== payload.id),
-        ]);
+        return upsertNoteInOrder(prev, {
+          ...current,
+          title: payload.title,
+          body: nextBody,
+        });
       });
       if (activeIdRef.current !== payload.id) return;
       // Generation timestamps can be laundered (post-#73 0804 clobber: a poll
@@ -676,6 +668,98 @@ export function AgentNoteApp({
     [applyCollapsed],
   );
 
+  /**
+   * Sidebar drag-to-reorder.
+   *
+   * HTML5 drag rather than a DnD library or the pointer handlers the panel
+   * resizer uses: a row is a whole element moving between two other rows, which
+   * is exactly what `dragover` + a drop indicator expresses, and it costs no
+   * dependency. Rows only accept a drop from a SIBLING — dragging never
+   * reparents, so `parent_id` still means "created inside", and a subtree
+   * follows its parent for free because the tree is flattened depth-first.
+   */
+  const [dragNoteId, setDragNoteId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    id: string;
+    place: DropPlace;
+  } | null>(null);
+  /**
+   * The one sibling group this drag may rewrite, resolved once at `dragstart`.
+   *
+   * A ref, not state: `dragover` fires on every pointer move, and re-deriving
+   * the group there would rebuild an id map per event — and a state read would
+   * be one render behind on the first one. If a poll adds a sibling mid-drag it
+   * is simply not in this group; the server leaves unsubmitted ranks alone, and
+   * a just-created note sits above the group anyway.
+   */
+  const dragGroup = useRef<{ id: string; ids: string[] } | null>(null);
+  /** Reorder PUTs still in flight — the poll must not undo them mid-air. */
+  const reorderPending = useRef(0);
+
+  const startRowDrag = useCallback((id: string) => {
+    const notes = notesRef.current;
+    dragGroup.current = {
+      id,
+      ids: siblingIds(notes, effectiveParentId(notes, id)),
+    };
+    setDragNoteId(id);
+  }, []);
+
+  const endRowDrag = useCallback(() => {
+    dragGroup.current = null;
+    setDragNoteId(null);
+    setDropTarget(null);
+  }, []);
+
+  const persistOrder = useCallback(async (ids: string[]) => {
+    reorderPending.current += 1;
+    try {
+      const response = await fetch("/api/notes/order", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!response.ok) return;
+      const data = (await response.json()) as { notes: Note[] };
+      // Replace the optimistic 1..n guess with what the server actually wrote.
+      setNotes((prev) => applyServerOrder(prev, data.notes));
+      syncPost.current({
+        type: "reorder",
+        sourceId: tabId.current,
+        order: data.notes.map((note) => ({
+          id: note.id,
+          sort_order: note.sort_order,
+        })),
+      });
+    } catch {
+      // Leave the optimistic order up; the next poll pulls the server's back.
+    } finally {
+      reorderPending.current -= 1;
+    }
+  }, []);
+
+  /** True when `targetId` is a legal drop for the row currently being dragged. */
+  const canDropOnRow = useCallback((targetId: string) => {
+    const group = dragGroup.current;
+    return group !== null && group.id !== targetId && group.ids.includes(targetId);
+  }, []);
+
+  const dropRowOn = useCallback(
+    (targetId: string, place: DropPlace) => {
+      const group = dragGroup.current;
+      const allowed = canDropOnRow(targetId);
+      endRowDrag();
+      if (!group || !allowed) return;
+
+      const ordered = reorderSiblingIds(group.ids, group.id, targetId, place);
+      // Dropping a row back where it already sat is not a change to persist.
+      if (ordered.every((id, index) => id === group.ids[index])) return;
+      setNotes((prev) => applySiblingOrder(prev, ordered));
+      void persistOrder(ordered);
+    },
+    [canDropOnRow, endRowDrag, persistOrder],
+  );
+
   const selectTheme = useCallback(
     (id: ThemeId) => {
       setThemeId(id);
@@ -714,7 +798,7 @@ export function AgentNoteApp({
    */
   const sidebarRows = useMemo<NoteTreeRow[]>(() => {
     if (tagFilter) {
-      return sortNotesByRecent(notes)
+      return sortNotesByOrder(notes)
         .filter((note) => noteHasTag(note.body, tagFilter))
         .map((note) => ({
           note,
@@ -856,12 +940,7 @@ export function AgentNoteApp({
               // follow-up save silently overwrites the newer body (0804 wipe).
               // Only the explicit conflict actions may take a fresh token.
               const server = conflictNote;
-              setNotes((prev) =>
-                sortNotesByRecent([
-                  server,
-                  ...prev.filter((note) => note.id !== server.id),
-                ]),
-              );
+              setNotes((prev) => upsertNoteInOrder(prev, server));
             }
             setSaveErrorKind("conflict");
             setSaveStateNow("error");
@@ -886,12 +965,7 @@ export function AgentNoteApp({
 
           clearSaveRetry();
           setSaveErrorKind(null);
-          setNotes((prev) =>
-            sortNotesByRecent([
-              data.note,
-              ...prev.filter((note) => note.id !== data.note.id),
-            ]),
-          );
+          setNotes((prev) => upsertNoteInOrder(prev, data.note));
 
           // Our write landed: the server is now at this generation regardless of
           // whether the buffer has since advanced.
@@ -1004,12 +1078,7 @@ export function AgentNoteApp({
       lastAckedBodyRef.current = nextBody;
       baseUpdatedAtRef.current = data.note.updated_at;
       baseBodyRef.current = data.note.body;
-      setNotes((prev) =>
-        sortNotesByRecent([
-          data.note,
-          ...prev.filter((note) => note.id !== data.note.id),
-        ]),
-      );
+      setNotes((prev) => upsertNoteInOrder(prev, data.note));
       setSaveErrorKind(null);
       setSaveStateNow("saved");
     } catch {
@@ -1214,20 +1283,25 @@ export function AgentNoteApp({
         }
       }
 
+      // A reorder leaves `updated_at` alone, so the newer-wins merge above
+      // cannot carry it — ranks are server-owned and adopted outright. Skipped
+      // while one of our own drags is in flight, or the poll would flick the
+      // row back to where it came from until the PUT lands.
+      if (reorderPending.current === 0) {
+        setNotes((prev) => applyServerOrder(prev, remoteNotes));
+      }
+
       const remoteIds = new Set(remoteNotes.map((note) => note.id));
       const missing = notesRef.current.filter((note) => !remoteIds.has(note.id));
       if (missing.length > 0) {
         setNotes((prev) =>
-          sortNotesByRecent(prev.filter((note) => remoteIds.has(note.id))),
+          sortNotesByOrder(prev.filter((note) => remoteIds.has(note.id))),
         );
         if (
           activeIdRef.current &&
           !remoteIds.has(activeIdRef.current)
         ) {
-          const fallback =
-            mostRecentNote(remoteNotes) ??
-            sortNotesByRecent(remoteNotes)[0] ??
-            null;
+          const fallback = firstNoteInOrder(remoteNotes);
           if (fallback) {
             // Active note vanished remotely — switch without flushing a ghost id.
             applyActiveNoteSelection(fallback, { history: "replace" });
@@ -1263,13 +1337,17 @@ export function AgentNoteApp({
         applyRemoteNote(message.note);
         return;
       }
+      if (message.type === "reorder") {
+        setNotes((prev) => applyServerOrder(prev, message.order));
+        return;
+      }
       if (message.type === "archive") {
         setNotes((prev) => {
-          const next = sortNotesByRecent(
+          const next = sortNotesByOrder(
             prev.filter((note) => note.id !== message.note.id),
           );
           if (activeIdRef.current === message.note.id) {
-            const fallback = mostRecentNote(next) ?? next[0] ?? null;
+            const fallback = firstNoteInOrder(next);
             skipNextSave.current = true;
             if (fallback) {
               const nextBody = substituteAsciiArrows(fallback.body).text;
@@ -1308,11 +1386,11 @@ export function AgentNoteApp({
       }
       if (message.type === "delete") {
         setNotes((prev) => {
-          const next = sortNotesByRecent(
+          const next = sortNotesByOrder(
             prev.filter((note) => note.id !== message.id),
           );
           if (activeIdRef.current === message.id) {
-            const fallback = mostRecentNote(next) ?? next[0] ?? null;
+            const fallback = firstNoteInOrder(next);
             skipNextSave.current = true;
             if (fallback) {
               const nextBody = substituteAsciiArrows(fallback.body).text;
@@ -1392,7 +1470,9 @@ export function AgentNoteApp({
       });
       if (!response.ok) return null;
       const data = (await response.json()) as { note: Note };
-      setNotes((prev) => sortNotesByRecent([data.note, ...prev]));
+      // The server gave it `min(siblings) - 1`, so it sorts to the top of its
+      // group — that IS the create-goes-on-top rule, not a client-side splice.
+      setNotes((prev) => sortNotesByOrder([data.note, ...prev]));
       syncPost.current({
         type: "upsert",
         sourceId: tabId.current,
@@ -1480,12 +1560,12 @@ export function AgentNoteApp({
         note: archived,
       });
       const wasActive = activeIdRef.current === id;
-      const remaining = sortNotesByRecent(
+      const remaining = sortNotesByOrder(
         notesRef.current.filter((note) => note.id !== id),
       );
       setNotes(remaining);
       if (wasActive) {
-        const fallback = mostRecentNote(remaining) ?? remaining[0] ?? null;
+        const fallback = firstNoteInOrder(remaining);
         if (fallback) {
           await selectNote(fallback, { skipFlush: true });
         } else {
@@ -1519,12 +1599,8 @@ export function AgentNoteApp({
       note: data.note,
     });
     setArchivedNotes((prev) => prev.filter((item) => item.id !== data.note.id));
-    setNotes((prev) =>
-      sortNotesByRecent([
-        data.note,
-        ...prev.filter((item) => item.id !== data.note.id),
-      ]),
-    );
+    // Keeps its old rank, so a restore returns the note to where it sat.
+    setNotes((prev) => upsertNoteInOrder(prev, data.note));
     await selectNote(data.note);
   }
 
@@ -1863,6 +1939,52 @@ export function AgentNoteApp({
                     key={note.id}
                     className="zed-note-item"
                     data-active={active}
+                    // A `#tag` view is a flat search result, not the arrangement
+                    // — there is no sibling group under it to rewrite.
+                    draggable={!tagFilter}
+                    data-dragging={note.id === dragNoteId ? "true" : undefined}
+                    data-drop={
+                      dropTarget?.id === note.id ? dropTarget.place : undefined
+                    }
+                    onDragStart={(event) => {
+                      startRowDrag(note.id);
+                      event.dataTransfer.effectAllowed = "move";
+                      // Firefox starts no drag at all without payload data.
+                      event.dataTransfer.setData("text/plain", note.id);
+                    }}
+                    onDragEnd={endRowDrag}
+                    onDragOver={(event) => {
+                      if (!canDropOnRow(note.id)) return;
+                      // preventDefault is what marks the row a drop target.
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      const box = event.currentTarget.getBoundingClientRect();
+                      const place: DropPlace =
+                        event.clientY < box.top + box.height / 2
+                          ? "before"
+                          : "after";
+                      setDropTarget((prev) =>
+                        prev?.id === note.id && prev.place === place
+                          ? prev
+                          : { id: note.id, place },
+                      );
+                    }}
+                    onDragLeave={() => {
+                      setDropTarget((prev) =>
+                        prev?.id === note.id ? null : prev,
+                      );
+                    }}
+                    onDrop={(event) => {
+                      if (!canDropOnRow(note.id)) return;
+                      event.preventDefault();
+                      const box = event.currentTarget.getBoundingClientRect();
+                      dropRowOn(
+                        note.id,
+                        event.clientY < box.top + box.height / 2
+                          ? "before"
+                          : "after",
+                      );
+                    }}
                     style={{ "--depth": depth } as CSSProperties}
                   >
                     <button
@@ -2075,12 +2197,7 @@ export function AgentNoteApp({
         note={activeNote}
         onClose={() => setPublishOpen(false)}
         onNoteChange={(note) => {
-          setNotes((prev) =>
-            sortNotesByRecent([
-              note,
-              ...prev.filter((item) => item.id !== note.id),
-            ]),
-          );
+          setNotes((prev) => upsertNoteInOrder(prev, note));
           // Publish/unpublish bumps `updated_at` without touching the body —
           // advance the base so the next save is not a false conflict (#57).
           if (activeIdRef.current === note.id) {

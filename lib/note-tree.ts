@@ -1,3 +1,4 @@
+import { compareNoteOrder, sortNotesByOrder } from "./note-order";
 import type { Note } from "./types";
 
 /** One rendered sidebar row, in depth-first order. */
@@ -7,11 +8,6 @@ export type NoteTreeRow = {
   hasChildren: boolean;
   expanded: boolean;
 };
-
-/** Newest first — the ordering the flat sidebar used, now applied per level. */
-function byRecent(a: Note, b: Note) {
-  return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-}
 
 /**
  * Group notes by `parent_id`, returning root notes and a child index.
@@ -27,10 +23,7 @@ function indexByParent(notes: Note[]) {
   const children = new Map<string, Note[]>();
 
   for (const note of notes) {
-    const parentId =
-      note.parent_id && note.parent_id !== note.id && byId.has(note.parent_id)
-        ? note.parent_id
-        : null;
+    const parentId = resolveParent(byId, note);
     if (!parentId) {
       roots.push(note);
       continue;
@@ -40,20 +33,52 @@ function indexByParent(notes: Note[]) {
     else children.set(parentId, [note]);
   }
 
-  roots.sort(byRecent);
-  for (const siblings of children.values()) siblings.sort(byRecent);
+  roots.sort(compareNoteOrder);
+  for (const siblings of children.values()) siblings.sort(compareNoteOrder);
 
   return { roots, children };
 }
 
 /**
- * Default landing / fallback note: truly newest by `updated_at`, including
- * nested sub-notes. Sidebar auto-reveal (via `ancestorIds`) expands parents
- * when the landing target is nested.
+ * The parent a row is actually RENDERED under, which is not always its
+ * `parent_id`: an archived parent is absent from the live list, so its children
+ * are drawn as roots. Drag targeting has to agree with the tree exactly, or a
+ * stranded child would refuse a drop next to the roots it sits among.
  */
-export function mostRecentNote(notes: Note[]): Note | null {
+function resolveParent(byId: Map<string, Note>, note: Note): string | null {
+  return note.parent_id &&
+    note.parent_id !== note.id &&
+    byId.has(note.parent_id)
+    ? note.parent_id
+    : null;
+}
+
+/** Rendered parent of `id` — null for a root row. See `resolveParent`. */
+export function effectiveParentId(notes: Note[], id: string): string | null {
+  const byId = new Map(notes.map((note) => [note.id, note]));
+  const note = byId.get(id);
+  return note ? resolveParent(byId, note) : null;
+}
+
+/** Ids drawn at one level, in render order. The unit a drag rewrites. */
+export function siblingIds(notes: Note[], parentId: string | null): string[] {
+  const { roots, children } = indexByParent(notes);
+  const group = parentId === null ? roots : (children.get(parentId) ?? []);
+  return group.map((note) => note.id);
+}
+
+/**
+ * Default landing / fallback note: the top of the sidebar as the user sees it.
+ *
+ * This was "newest by `updated_at`", which used to be the same row — the list
+ * was sorted by recency. Now that order is manual, the top ROW is the honest
+ * reading of "open the note the list starts with".
+ */
+export function firstNoteInOrder(notes: Note[]): Note | null {
   if (notes.length === 0) return null;
-  return [...notes].sort(byRecent)[0] ?? null;
+  // Fall back to the flat order so a list that is somehow all-stranded (a
+  // parent cycle) still resolves to a note rather than to "no open note".
+  return indexByParent(notes).roots[0] ?? sortNotesByOrder(notes)[0] ?? null;
 }
 
 /**
@@ -131,7 +156,7 @@ function strandedNotes(
     reachable.add(id);
     for (const kid of children.get(id) ?? []) stack.push(kid.id);
   }
-  return notes.filter((note) => !reachable.has(note.id)).sort(byRecent);
+  return notes.filter((note) => !reachable.has(note.id)).sort(compareNoteOrder);
 }
 
 /** Every id that has at least one child — the set `⌘←` collapses. */

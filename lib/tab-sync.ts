@@ -49,6 +49,16 @@ export type SyncMessage =
     }
   | {
       /**
+       * Manual sidebar order changed. Carries only the ranks, never bodies: a
+       * reorder leaves `updated_at` untouched, so the usual newer-wins upsert
+       * would drop it on the floor.
+       */
+      type: "reorder";
+      sourceId: string;
+      order: Pick<Note, "id" | "sort_order">[];
+    }
+  | {
+      /**
        * Binary Yjs update for a CRDT-backed note, mirrored to peer tabs
        * instantly. Structured clone handles `Uint8Array` natively. No sequence
        * number: duplicate and out-of-order delivery are correct CRDT inputs.
