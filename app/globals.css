@@ -526,6 +526,7 @@ a.zed-save-error__action {
 }
 
 .zed-panel {
+  position: relative;
   width: var(--c-panel-w);
   flex-shrink: 0;
   display: flex;
@@ -544,6 +545,47 @@ a.zed-save-error__action {
   border-right-color: transparent;
 }
 
+/* Drag resize: the 160ms open/close ease would rubber-band under the cursor. */
+.zed-shell[data-resizing="true"] {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.zed-shell[data-resizing="true"] .zed-panel {
+  transition: border-color 160ms ease;
+}
+
+.zed-panel__resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.zed-panel__resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--c-text-accent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.zed-panel__resizer:hover::after,
+.zed-shell[data-resizing="true"] .zed-panel__resizer::after {
+  opacity: 0.6;
+}
+
+.zed-panel[data-open="false"] .zed-panel__resizer {
+  display: none;
+}
+
 .zed-panel__header {
   height: 32px;
   flex-shrink: 0;
@@ -554,12 +596,49 @@ a.zed-save-error__action {
   border-bottom: 1px solid var(--c-border-variant);
 }
 
-.zed-panel__title {
+.zed-panel__segments {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.zed-panel__segment {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   color: var(--c-text-muted);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.zed-panel__segment:hover {
+  background: var(--c-element-hover);
+  color: var(--c-text);
+}
+
+.zed-panel__segment[data-active="true"] {
+  background: var(--c-element-selected);
+  color: var(--c-text);
+}
+
+.zed-panel__segment-count {
+  color: var(--c-text-placeholder);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.zed-panel__segment[data-active="true"] .zed-panel__segment-count {
+  color: var(--c-text-muted);
 }
 
 .zed-panel__actions {
@@ -1225,38 +1304,10 @@ a.zed-save-error__action {
   justify-content: flex-end;
 }
 
-.zed-panel__archived {
-  border-top: 1px solid var(--c-border);
-  margin-top: auto;
-  flex-shrink: 0;
-}
-
-.zed-panel__archived-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  color: var(--c-text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  background: transparent;
-  border: 0;
-  text-align: left;
-}
-
-.zed-panel__archived-toggle:hover {
-  color: var(--c-text);
-  background: var(--c-element-hover);
-}
-
 .zed-panel__archived-list {
-  max-height: 180px;
+  flex: 1;
   overflow: auto;
-  padding: 0 8px 8px;
+  padding: 8px;
 }
 
 .zed-panel__archived-list .zed-note-item__hit {
