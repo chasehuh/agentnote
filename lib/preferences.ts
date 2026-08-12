@@ -53,6 +53,25 @@ export function parseSidebarWidth(
   return clampSidebarWidth(px, viewportWidth);
 }
 
+/**
+ * Opt-in for Mod+1…Mod+9 note jumping. Per-browser, like the sidebar width.
+ *
+ * Off by default and on purpose: browsers and OS shells already own Cmd+digit,
+ * so AgentNote may only claim those chords once the user has asked for it.
+ */
+export const DIGIT_SHORTCUTS_STORAGE_KEY = "agentnote.sidebarDigitShortcuts";
+export const DEFAULT_DIGIT_SHORTCUTS = false;
+
+/**
+ * Read the persisted opt-in. Only a literal `"true"` turns the chords on —
+ * anything unset, stale or malformed must leave Mod+digit to the host.
+ */
+export function parseDigitShortcuts(value: string | null): boolean {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return DEFAULT_DIGIT_SHORTCUTS;
+}
+
 /** Highest note row a Mod+digit chord can reach. Mod+0 is deliberately unbound. */
 const MAX_SHORTCUT_NOTE_INDEX = 8;
 
