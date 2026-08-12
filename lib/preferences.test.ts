@@ -7,6 +7,7 @@ import {
   isWrapPreference,
   noteIndexForShortcut,
   parseCollapsedIds,
+  parseDigitShortcuts,
   parseSidebarWidth,
 } from "./preferences";
 
@@ -92,6 +93,24 @@ describe("parseSidebarWidth", () => {
   // A width persisted on a big monitor must not survive onto a small one.
   it("re-clamps a stored width against the current viewport", () => {
     expect(parseSidebarWidth("470", 800)).toBe(360);
+  });
+});
+
+describe("parseDigitShortcuts", () => {
+  it("round-trips the persisted booleans", () => {
+    expect(parseDigitShortcuts("true")).toBe(true);
+    expect(parseDigitShortcuts("false")).toBe(false);
+  });
+
+  // Failing off matters here: claiming ⌘1…⌘9 from the browser on the strength
+  // of a junk storage value would break tab switching for a user who never
+  // asked for the chords.
+  it("defaults to off for an unset or malformed value", () => {
+    expect(parseDigitShortcuts(null)).toBe(false);
+    expect(parseDigitShortcuts("")).toBe(false);
+    expect(parseDigitShortcuts("yes")).toBe(false);
+    expect(parseDigitShortcuts("1")).toBe(false);
+    expect(parseDigitShortcuts("TRUE")).toBe(false);
   });
 });
 

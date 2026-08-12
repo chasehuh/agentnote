@@ -28,8 +28,10 @@ import {
 } from "@/lib/note-tree";
 import { allTags, noteHasTag } from "@/lib/tags";
 import {
+  DEFAULT_DIGIT_SHORTCUTS,
   DEFAULT_SIDEBAR_WIDTH,
   DEFAULT_WRAP,
+  DIGIT_SHORTCUTS_STORAGE_KEY,
   SIDEBAR_WIDTH_STORAGE_KEY,
   TREE_COLLAPSED_STORAGE_KEY,
   WRAP_STORAGE_KEY,
@@ -37,6 +39,7 @@ import {
   isWrapPreference,
   noteIndexForShortcut,
   parseCollapsedIds,
+  parseDigitShortcuts,
   parseSidebarWidth,
 } from "@/lib/preferences";
 import { bodyFingerprint } from "@/lib/body-fingerprint";
@@ -80,6 +83,7 @@ import { ConfirmDialog } from "./confirm-dialog";
 import {
   ChevronRightIcon,
   DownloadIcon,
+  KeyboardIcon,
   PlusIcon,
   SidebarLeftClosedIcon,
   SidebarLeftOpenIcon,
@@ -247,6 +251,8 @@ export function AgentNoteApp({
   const [appearance, setAppearance] =
     useState<Appearance>(DEFAULT_APPEARANCE);
   const [wrap, setWrap] = useState(DEFAULT_WRAP);
+  /** Opt-in for ⌘1…⌘9. Server-rendered off, then restored in the preferences effect. */
+  const [digitShortcuts, setDigitShortcuts] = useState(DEFAULT_DIGIT_SHORTCUTS);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryAttemptRef = useRef(0);
@@ -555,6 +561,11 @@ export function AgentNoteApp({
     setThemeId(nextTheme);
     setAppearance(nextAppearance);
     setWrap(savedWrap ?? DEFAULT_WRAP);
+    setDigitShortcuts(
+      parseDigitShortcuts(
+        window.localStorage.getItem(DIGIT_SHORTCUTS_STORAGE_KEY),
+      ),
+    );
     applyTheme(nextTheme, nextAppearance);
     const restored = new Set(
       parseCollapsedIds(window.localStorage.getItem(TREE_COLLAPSED_STORAGE_KEY)),
@@ -686,6 +697,12 @@ export function AgentNoteApp({
   const selectWrap = useCallback((next: boolean) => {
     setWrap(next);
     window.localStorage.setItem(WRAP_STORAGE_KEY, String(next));
+  }, []);
+
+  /** Shared by the panel-header toggle and the Settings row. */
+  const selectDigitShortcuts = useCallback((next: boolean) => {
+    setDigitShortcuts(next);
+    window.localStorage.setItem(DIGIT_SHORTCUTS_STORAGE_KEY, String(next));
   }, []);
 
   /**
@@ -1623,11 +1640,19 @@ export function AgentNoteApp({
         setSidebarOpen((value) => !value);
       }
       // ⌘1…⌘9 open the Nth row of the list as rendered — the same DFS and the
-      // same `#tag` filter the user is looking at. Chromium and Safari usually
-      // keep these for their own tab switching on the web, so this binding is
-      // what a Tauri shell or a host that does not steal the chord gets
-      // (issue #108, accepted limitation).
-      if (meta && !modalOpen && !isPlainTextEntry(event.target)) {
+      // same `#tag` filter the user is looking at.
+      //
+      // Opt-in and off by default: browsers and OS shells already own these
+      // chords (Chromium and Safari tab switching, for one), so while the
+      // preference is off this branch never runs and never preventDefaults —
+      // the host keeps them. Turning it on is what a Tauri shell (#19) or a
+      // host that does not steal the chord gets.
+      if (
+        digitShortcuts &&
+        meta &&
+        !modalOpen &&
+        !isPlainTextEntry(event.target)
+      ) {
         const index = noteIndexForShortcut(event);
         const row = index === null ? undefined : sidebarRows[index];
         // Out of range is a no-op, and an unclaimed chord at that: swallowing
@@ -1641,7 +1666,14 @@ export function AgentNoteApp({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createNote, applyCollapsed, modalOpen, sidebarRows, selectNote]);
+  }, [
+    createNote,
+    applyCollapsed,
+    modalOpen,
+    digitShortcuts,
+    sidebarRows,
+    selectNote,
+  ]);
 
   return (
     <div className="zed-shell" data-resizing={resizing ? "true" : undefined}>
@@ -1787,6 +1819,19 @@ export function AgentNoteApp({
               </button>
             ) : null}
             <div className="zed-panel__actions">
+              <button
+                type="button"
+                className="zed-icon-btn zed-icon-btn--toggle"
+                data-active={digitShortcuts ? "true" : "false"}
+                aria-pressed={digitShortcuts}
+                onClick={() => selectDigitShortcuts(!digitShortcuts)}
+                title={`⌘1–9 note jump: ${
+                  digitShortcuts ? "On" : "Off"
+                } — select the Nth note in this list`}
+                aria-label={`⌘1–9 note jump: ${digitShortcuts ? "On" : "Off"}`}
+              >
+                <KeyboardIcon size={14} />
+              </button>
               <button
                 type="button"
                 className="zed-icon-btn"
@@ -2017,10 +2062,12 @@ export function AgentNoteApp({
         themeId={themeId}
         appearance={appearance}
         wrap={wrap}
+        digitShortcuts={digitShortcuts}
         onClose={() => setSettingsOpen(false)}
         onThemeChange={selectTheme}
         onAppearanceChange={selectAppearance}
         onWrapChange={selectWrap}
+        onDigitShortcutsChange={selectDigitShortcuts}
       />
 
       <PublishPanel

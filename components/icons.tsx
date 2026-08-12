@@ -207,3 +207,25 @@ export function SettingsIcon({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+/** `keyboard.svg` — the ⌘1–9 note-jump opt-in. */
+export function KeyboardIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <path
+        d="M6.75 5.5h.007M8 8h.007M9.25 5.5h.007M10.5 8h.007M11.75 5.5h.007M4.25 5.5h.007M4.875 10.5h6.25M5.5 8h.007M13 3H3c-.69 0-1.25.56-1.25 1.25v7.5c0 .69.56 1.25 1.25 1.25h10c.69 0 1.25-.56 1.25-1.25v-7.5C14.25 3.56 13.69 3 13 3Z"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

@@ -519,6 +519,13 @@ a.zed-save-error__action {
   color: var(--c-text);
 }
 
+/* A latching on/off control, not a momentary action: muted → text alone does
+   not read as "on" in an otherwise monochrome panel, so the accent carries it. */
+.zed-icon-btn--toggle[data-active="true"] {
+  background: var(--c-element-selected);
+  color: var(--c-text-accent);
+}
+
 .zed-workspace {
   display: flex;
   flex: 1;
@@ -1404,6 +1411,17 @@ a.zed-save-error__action {
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+/* Explanatory line under a section label — undoes the label's caps treatment. */
+.agentnote-settings__sub {
+  display: block;
+  margin-top: 4px;
+  color: var(--c-text-placeholder);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .agentnote-settings__segment {

@@ -32,19 +32,23 @@ export function SettingsPanel({
   themeId,
   appearance,
   wrap,
+  digitShortcuts,
   onClose,
   onThemeChange,
   onAppearanceChange,
   onWrapChange,
+  onDigitShortcutsChange,
 }: {
   open: boolean;
   themeId: ThemeId;
   appearance: Appearance;
   wrap: boolean;
+  digitShortcuts: boolean;
   onClose: () => void;
   onThemeChange: (id: ThemeId) => void;
   onAppearanceChange: (appearance: Appearance) => void;
   onWrapChange: (wrap: boolean) => void;
+  onDigitShortcutsChange: (enabled: boolean) => void;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -118,6 +122,34 @@ export function SettingsPanel({
                 onClick={() => onWrapChange(false)}
               >
                 No wrap
+              </button>
+            </div>
+          </section>
+
+          <section className="agentnote-settings__section">
+            <h3 className="agentnote-settings__label">
+              ⌘1–9 note jump
+              <span className="agentnote-settings__sub">
+                Select the Nth note in the sidebar list. Off by default — most
+                browsers use these for tab switching.
+              </span>
+            </h3>
+            <div className="agentnote-settings__segment" role="group">
+              <button
+                type="button"
+                className="agentnote-settings__segment-btn"
+                data-active={digitShortcuts ? "true" : "false"}
+                onClick={() => onDigitShortcutsChange(true)}
+              >
+                On
+              </button>
+              <button
+                type="button"
+                className="agentnote-settings__segment-btn"
+                data-active={!digitShortcuts ? "true" : "false"}
+                onClick={() => onDigitShortcutsChange(false)}
+              >
+                Off
               </button>
             </div>
           </section>
