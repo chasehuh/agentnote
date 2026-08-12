@@ -21,6 +21,7 @@ function noteRow(overrides: Record<string, unknown> = {}) {
     created_at: now,
     updated_at: now,
     deleted_at: null,
+    sort_order: 1,
     is_public: false,
     public_id: null,
     published_at: null,

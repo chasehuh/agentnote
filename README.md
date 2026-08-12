@@ -56,7 +56,7 @@ Open [http://localhost:3000](http://localhost:3000) and sign in with GitHub.
 | `⌘B` / `Ctrl+B` | Toggle `**bold**` around the selection (empty caret inserts `****`) |
 | `⇧⌘X` | Toggle `~~strikethrough~~` |
 | `⌘⇧B` / `Ctrl+Shift+B`, `⌘\` | Show / hide the notes sidebar |
-| `⌘N` | New note (always at the top level) |
+| `⌘N` | New note (always a root note, and it lands at the top of the list) |
 | `⌘⌫` | Delete to hard line start |
 | `⇧⌘K` | Delete the line |
 | `→` / `←` (on a sidebar note) | Expand / collapse its sub-notes |
@@ -84,6 +84,23 @@ So a body full of `/n/…` links implies no hierarchy at all — the tree comes 
 | `#` | Completes from tags already used across your notes. |
 
 **`[[` is a trigger, never a storage format.** Only standard Markdown is written to the body, so publishing, `note_revisions`, and CRDT sync need no knowledge of any of it. Existing `[label](/n/{id})` links keep working unchanged. Hierarchy lives in the `notes.parent_id` column, not in the note body, so it is likewise invisible to the CRDT.
+
+### Sidebar order
+
+The sidebar is **arranged, not sorted**. It is not a recency list, so editing a note never moves its row.
+
+| Event | Where the row goes |
+| --- | --- |
+| **New note** (`⌘N`, the sidebar `+`, or `[[` / `/` create) | The **top** of its sibling group — `⌘N` tops the root list, a sub-note tops its parent's children. |
+| **Drag a row** onto another row | It lands above or below that row, depending on which half you drop on. |
+| **Editing, saving, publishing** | Nowhere. The row refreshes in place. |
+| **Restoring from Archived** | Back to the rank it had when it was archived. |
+
+Order lives in the `notes.sort_order` column, so it is per-account and every device agrees. A create takes `min(siblings) - 1`, which is a single-row write; a drag rewrites the whole dragged group to `1..n` through `PUT /api/notes/order`. Reordering deliberately leaves `updated_at` alone — it is not an edit, and bumping it would hand every open editor a false save conflict.
+
+**Drag is sibling-only.** A row only accepts a drop from a note at the same level under the same parent, so dragging never reparents — `parent_id` still means "created inside" and nothing else. Dragging a parent carries its whole subtree, since the tree is flattened depth-first. While a `#tag` filter is active rows are not draggable: that view is a flat search result, not the arrangement. `⌘1`…`⌘9` follow the rendered list, so they follow the arrangement too.
+
+Existing notes were ranked by their `updated_at` at migration time, so the first load after the upgrade looked exactly like the last load before it.
 
 Archiving a parent does not archive or hide its children — they move up to the top level of the sidebar and re-nest when the parent is restored. Permanently deleting a parent promotes its children to the top level (`ON DELETE SET NULL`) rather than deleting them. While a `#tag` filter is active the sidebar is a flat result list, since nesting matches under parents the filter excluded would draw structure the results do not have.
 

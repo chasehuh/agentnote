@@ -243,6 +243,53 @@ async function runSchemaMigrations(pool: Pool) {
     ON notes (user_id, parent_id);
   `);
 
+  // Manual sidebar order (see lib/note-order.ts). Added nullable so the
+  // backfill below can rank existing rows by the recency they were last shown
+  // in — the first load after this deploy has to look exactly like the last
+  // load before it. DEFAULT/NOT NULL only go on once nothing is left null.
+  await pool.query(`
+    ALTER TABLE notes ADD COLUMN IF NOT EXISTS sort_order INTEGER;
+  `);
+  await pool.query(`
+    UPDATE notes AS n
+    SET sort_order = ranked.rank
+    FROM (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (
+          PARTITION BY user_id, parent_id
+          ORDER BY updated_at DESC, id
+        )::int AS rank
+      FROM notes
+      WHERE sort_order IS NULL
+    ) AS ranked
+    WHERE n.id = ranked.id AND n.sort_order IS NULL;
+  `);
+  await pool.query(`
+    ALTER TABLE notes ALTER COLUMN sort_order SET DEFAULT 0;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'notes'
+          AND column_name = 'sort_order'
+          AND is_nullable = 'YES'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM notes WHERE sort_order IS NULL
+      ) THEN
+        ALTER TABLE notes ALTER COLUMN sort_order SET NOT NULL;
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS notes_user_sort_order_idx
+    ON notes (user_id, parent_id, sort_order)
+    WHERE deleted_at IS NULL;
+  `);
+
   // Body revision trail — previous body before overwrite (see README recovery).
   // ON DELETE CASCADE: permanent delete / archive purge also drops revisions.
   await pool.query(`

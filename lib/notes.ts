@@ -34,6 +34,7 @@ type NoteRow = {
   updated_at: Date;
   deleted_at: Date | null;
   parent_id: string | null;
+  sort_order: number;
   is_public: boolean;
   public_id: string | null;
   published_at: Date | null;
@@ -65,7 +66,14 @@ type UpdatedNoteRow = NoteRow & {
 };
 
 const NOTE_COLUMNS = `id, title, body, created_at, updated_at, deleted_at,
-  parent_id, is_public, public_id, published_at, author_handle`;
+  parent_id, sort_order, is_public, public_id, published_at, author_handle`;
+
+/**
+ * Manual sidebar order (lib/note-order.ts). `created_at DESC` breaks ties so a
+ * legacy row that never got a distinct rank still reads newest-first, and `id`
+ * keeps the ordering total across pages.
+ */
+const NOTE_ORDER_BY = `ORDER BY sort_order ASC, created_at DESC, id ASC`;
 
 function mapNote(row: NoteRow): Note {
   return {
@@ -76,6 +84,7 @@ function mapNote(row: NoteRow): Note {
     updated_at: row.updated_at.toISOString(),
     deleted_at: row.deleted_at ? row.deleted_at.toISOString() : null,
     parent_id: row.parent_id,
+    sort_order: Number(row.sort_order ?? 0),
     is_public: Boolean(row.is_public),
     public_id: row.public_id,
     published_at: row.published_at ? row.published_at.toISOString() : null,
@@ -171,7 +180,7 @@ export async function listNotes(userId: string): Promise<Note[]> {
     `SELECT ${NOTE_COLUMNS}
      FROM notes
      WHERE user_id = $1 AND deleted_at IS NULL
-     ORDER BY updated_at DESC`,
+     ${NOTE_ORDER_BY}`,
     [userId],
   );
   return result.rows.map(mapNote);
@@ -306,9 +315,19 @@ export async function createNote(
   for (let attempt = 0; attempt < 5; attempt++) {
     const id = createNoteId();
     try {
+      // New note goes to the TOP of its sibling group. Taking `min - 1` rather
+      // than shifting everyone down keeps a create a single-row write, so two
+      // tabs creating at once cannot interleave a partial renumber; the worst
+      // case is a tied rank, which `created_at DESC` already orders.
       const result = await query<NoteRow>(
-        `INSERT INTO notes (id, user_id, title, body, parent_id)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO notes (id, user_id, title, body, parent_id, sort_order)
+         VALUES ($1, $2, $3, $4, $5, (
+           SELECT COALESCE(MIN(sort_order), 1) - 1
+           FROM notes
+           WHERE user_id = $2
+             AND parent_id IS NOT DISTINCT FROM $5
+             AND deleted_at IS NULL
+         ))
          RETURNING ${NOTE_COLUMNS}`,
         [id, userId, title, body, parentId],
       );
@@ -324,6 +343,39 @@ export async function createNote(
   }
 
   throw new Error("Failed to allocate note id");
+}
+
+/**
+ * Write a dragged sibling group's manual order: `ids[0]` ends up on top.
+ *
+ * Scoped to the caller's live notes, so an id from another tenant (or an
+ * archived row) simply matches nothing instead of erroring — a drag that raced
+ * an archive in another tab must not fail the whole reorder.
+ *
+ * Deliberately NOT filtered by `parent_id`: the sidebar draws a note whose
+ * parent is archived among the roots, and the group the user actually dragged
+ * is the one the client rendered. Ranks are per-sibling-group regardless, and
+ * `updated_at` is left alone — reordering is not an edit, and bumping it would
+ * hand every open editor a false save conflict.
+ */
+export async function reorderNotes(
+  userId: string,
+  ids: string[],
+): Promise<Note[]> {
+  if (ids.length === 0) return [];
+  const result = await query<NoteRow>(
+    `UPDATE notes AS n
+     SET sort_order = ordered.rank::int
+     FROM UNNEST($2::text[]) WITH ORDINALITY AS ordered(id, rank)
+     WHERE n.id = ordered.id
+       AND n.user_id = $1
+       AND n.deleted_at IS NULL
+     RETURNING n.id, n.title, n.body, n.created_at, n.updated_at, n.deleted_at,
+       n.parent_id, n.sort_order, n.is_public, n.public_id, n.published_at,
+       n.author_handle`,
+    [userId, ids],
+  );
+  return result.rows.map(mapNote);
 }
 
 export type UpdateNoteInput = {

@@ -27,6 +27,7 @@ const createdNote: Note = {
   updated_at: NOW,
   deleted_at: null,
   parent_id: PARENT_ID,
+  sort_order: 1,
   is_public: false,
   public_id: null,
   published_at: null,

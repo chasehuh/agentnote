@@ -15,6 +15,13 @@ export type Note = {
    * sets this — hierarchy is a create-time edge, not a parse of the body.
    */
   parent_id: string | null;
+  /**
+   * Manual sidebar rank among siblings (lower = higher in the list). Owned by
+   * the server: a create takes `min(siblings) - 1` so it lands on top, and a
+   * drag rewrites the whole sibling group to `1..n`. Never bumped by an edit —
+   * the sidebar is not a recency list (see lib/note-order.ts).
+   */
+  sort_order: number;
   /** True when a public `/p/...` link is live. */
   is_public: boolean;
   /**
