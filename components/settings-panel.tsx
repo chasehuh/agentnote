@@ -130,10 +130,10 @@ export function SettingsPanel({
             <h3 className="agentnote-settings__label">
               Note shortcuts
               <span className="agentnote-settings__sub">
-                ⌘1–9 selects the Nth note in the sidebar list; ⌘[ and ⌘] move to
-                the one above or below. Off by default — most browsers use these
-                for tab and history navigation. ⌘[ / ⌘] keep indenting inside
-                the editor.
+                ⌘1–9 selects the Nth note in the sidebar list; ⌘⇧[ and ⌘⇧] move
+                to the one above or below. Off by default — most browsers use
+                these for tab and history navigation. Bare ⌘[ / ⌘] always
+                indent inside the editor.
               </span>
             </h3>
             <div className="agentnote-settings__segment" role="group">

@@ -73,13 +73,18 @@ export function parseDigitShortcuts(value: string | null): boolean {
 }
 
 /**
- * Mod+[ / Mod+] → a step of -1 (previous row) or +1 (next row) in the rendered
- * note list. Null for every other key.
+ * Mod+Shift+[ / Mod+Shift+] → a step of -1 (previous row) or +1 (next row) in
+ * the rendered note list. Null for every other key.
  *
  * Same contract as `noteIndexForShortcut`: the caller owns the `metaKey ||
- * ctrlKey` check and the end-of-list decision. Shift/Alt disqualify so ⌘⇧[
- * stays free, and `code` is checked alongside `key` because the bracket keys
- * carry different characters on non-US layouts.
+ * ctrlKey` check and the end-of-list decision.
+ *
+ * Shift is *required*, not merely tolerated. Bare Mod+[ / Mod+] are
+ * CodeMirror's indentLess / indentMore and stay the editor's — the shifted
+ * chord is the one editors reserve for "previous / next tab". Alt still
+ * disqualifies, and `code` is checked alongside `key` because the bracket keys
+ * carry different characters on non-US layouts (German ü/+, French ^/$) and
+ * shift to `{` / `}` even on a US one.
  */
 export function noteStepForShortcut(event: {
   key: string;
@@ -87,9 +92,13 @@ export function noteStepForShortcut(event: {
   shiftKey: boolean;
   altKey: boolean;
 }): -1 | 1 | null {
-  if (event.shiftKey || event.altKey) return null;
-  if (event.key === "[" || event.code === "BracketLeft") return -1;
-  if (event.key === "]" || event.code === "BracketRight") return 1;
+  if (!event.shiftKey || event.altKey) return null;
+  if (event.key === "[" || event.key === "{" || event.code === "BracketLeft") {
+    return -1;
+  }
+  if (event.key === "]" || event.key === "}" || event.code === "BracketRight") {
+    return 1;
+  }
   return null;
 }
 

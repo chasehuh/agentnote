@@ -215,6 +215,17 @@ export function AgentNoteApp({
   const [activeId, setActiveId] = useState<string | null>(() => {
     return resolveInitialNote(initialNotes, initialSelectedId)?.id ?? null;
   });
+  /**
+   * Where the chrome already says we are while the note we are leaving still
+   * owes the server a write. Null whenever the buffer has caught up, which is
+   * every moment except the tail of a legacy save (see `selectNote`).
+   */
+  const [pendingSelectionId, setPendingSelectionId] = useState<string | null>(
+    null,
+  );
+  const pendingSelectionRef = useRef<string | null>(null);
+  /** Bumped by every switch, so a slow flush can never re-target a newer one. */
+  const selectionSeqRef = useRef(0);
   const [body, setBody] = useState(() => {
     const initial = resolveInitialNote(initialNotes, initialSelectedId);
     return substituteAsciiArrows(initial?.body ?? "").text;
@@ -331,6 +342,11 @@ export function AgentNoteApp({
   const setSaveStateNow = useCallback((next: SaveState) => {
     saveStateRef.current = next;
     setSaveState(next);
+  }, []);
+
+  const setPendingSelection = useCallback((id: string | null) => {
+    pendingSelectionRef.current = id;
+    setPendingSelectionId(id);
   }, []);
 
   /** Refresh the sidebar row from the server's plaintext projection of the CRDT. */
@@ -813,15 +829,16 @@ export function AgentNoteApp({
 
   /**
    * The row one `step` away from the open note, or undefined at either end —
-   * ⌘[ / ⌘] do not wrap. Undefined too when the open note is not in the list
+   * ⌘⇧[ / ⌘⇧] do not wrap. Undefined too when the open note is not in the list
    * at all (nothing open, or a `#tag` filter that excludes it): there is no
    * "adjacent" to a row that is not rendered.
    */
   const adjacentSidebarRow = useCallback(
     (step: -1 | 1) => {
-      const current = sidebarRows.findIndex(
-        (row) => row.note.id === activeIdRef.current,
-      );
+      // Step from where the chrome says we are, not from the buffer: chord
+      // spam has to keep walking while a slow save catches up behind it.
+      const from = pendingSelectionRef.current ?? activeIdRef.current;
+      const current = sidebarRows.findIndex((row) => row.note.id === from);
       if (current === -1) return undefined;
       return sidebarRows[current + step];
     },
@@ -833,8 +850,19 @@ export function AgentNoteApp({
     [notes, activeId],
   );
 
+  /**
+   * The row the user sees selected. Runs ahead of `activeId` for exactly as
+   * long as the note we are leaving is still flushing — the highlight is
+   * chrome, and chrome does not wait on the network.
+   */
+  const selectedId = pendingSelectionId ?? activeId;
+
   const applyActiveNoteSelection = useCallback(
     (note: Note, opts?: { history?: NoteUrlMode }) => {
+      // Authoritative: the buffer is this note now, so nothing optimistic is
+      // outstanding and any switch still awaiting a flush must stand down.
+      selectionSeqRef.current += 1;
+      setPendingSelection(null);
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
@@ -854,11 +882,13 @@ export function AgentNoteApp({
       syncNoteUrl(note.id, opts?.history ?? "push");
       if (isNarrowViewport()) setSidebarOpen(false);
     },
-    [clearSaveRetry, setBodyNow, setSaveStateNow],
+    [clearSaveRetry, setBodyNow, setPendingSelection, setSaveStateNow],
   );
 
   const applyClearActiveNote = useCallback(
     (opts?: { history?: NoteUrlMode }) => {
+      selectionSeqRef.current += 1;
+      setPendingSelection(null);
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
@@ -874,7 +904,7 @@ export function AgentNoteApp({
       setSaveStateNow("saved");
       syncNoteUrl(null, opts?.history ?? "push");
     },
-    [clearSaveRetry, setBodyNow, setSaveStateNow],
+    [clearSaveRetry, setBodyNow, setPendingSelection, setSaveStateNow],
   );
 
   const persist = useCallback(
@@ -1158,6 +1188,30 @@ export function AgentNoteApp({
     );
   }, [docFlush, flushPendingSave]);
 
+  /**
+   * Start whatever has to happen before the open note's buffer is replaced,
+   * and say whether the caller may move the selection *right now*.
+   *
+   * `true` means "nothing to wait for" — the switch is applied synchronously,
+   * which is the whole point: the sidebar highlight and the address bar must
+   * never sit on a network round trip (#118 L3).
+   *
+   * The CRDT path is always `true`. Its flush only asks the transport to send
+   * sooner; queued updates live in IndexedDB and the doc teardown beacons
+   * whatever is still out, so awaiting it buys no safety and costs a round
+   * trip on every single switch — that await was the lag. A legacy buffer with
+   * unsaved work is the one case that genuinely has to be awaited, and even
+   * there only the *buffer* waits (see `selectNote`).
+   */
+  const beginLeaveActive = useCallback((): true | Promise<boolean> => {
+    if (CRDT_ENABLED) {
+      void docFlush().catch(() => {});
+      return true;
+    }
+    if (!hasUnsavedWork(saveStateRef.current)) return true;
+    return ensureSafeToLeaveActive();
+  }, [docFlush, ensureSafeToLeaveActive]);
+
   const clearActiveNote = useCallback(
     async (opts?: { skipFlush?: boolean }) => {
       if (!opts?.skipFlush) {
@@ -1172,16 +1226,39 @@ export function AgentNoteApp({
 
   const selectNote = useCallback(
     async (note: Note, opts?: { skipFlush?: boolean }) => {
-      // Re-clicking the active note must not reset a dirty buffer from list state.
-      if (activeIdRef.current === note.id) return true;
-      if (!opts?.skipFlush) {
-        const ok = await ensureSafeToLeaveActive();
-        if (!ok) return false;
+      // Re-picking the note the chrome already points at must not reset a
+      // dirty buffer from list state.
+      const from = pendingSelectionRef.current ?? activeIdRef.current;
+      if (from === note.id) return true;
+      if (opts?.skipFlush) {
+        applyActiveNoteSelection(note);
+        return true;
       }
-      applyActiveNoteSelection(note);
+      const leaving = beginLeaveActive();
+      if (leaving === true) {
+        applyActiveNoteSelection(note);
+        return true;
+      }
+      // A dirty legacy buffer still owes the server a PUT, and swapping it out
+      // before that lands drops the edit. The chrome owes nothing: highlight
+      // the destination and move the address bar now, and let the buffer catch
+      // up when the write comes back.
+      const seq = ++selectionSeqRef.current;
+      setPendingSelection(note.id);
+      syncNoteUrl(note.id, "push");
+      const ok = await leaving;
+      // A newer switch owns the chrome now and will apply its own target.
+      if (seq !== selectionSeqRef.current) return ok;
+      if (!ok) {
+        // Flush failed and the user chose to keep the changes: put it back.
+        setPendingSelection(null);
+        syncNoteUrl(activeIdRef.current, "replace");
+        return false;
+      }
+      applyActiveNoteSelection(note, { history: "none" });
       return true;
     },
-    [applyActiveNoteSelection, ensureSafeToLeaveActive],
+    [applyActiveNoteSelection, beginLeaveActive, setPendingSelection],
   );
 
   // In-app markdown links (`/n/{id}`) dispatch from the CM6 link extension.
@@ -1683,8 +1760,8 @@ export function AgentNoteApp({
   // Zed `project_panel.auto_reveal_entries`: selecting a nested note opens the
   // path down to it, so the active row is never hidden inside a collapsed parent.
   useEffect(() => {
-    if (!activeId) return;
-    const ancestors = ancestorIds(notesRef.current, activeId);
+    if (!selectedId) return;
+    const ancestors = ancestorIds(notesRef.current, selectedId);
     if (ancestors.length === 0) return;
     applyCollapsed((prev) => {
       if (!ancestors.some((id) => prev.has(id))) return prev;
@@ -1692,7 +1769,7 @@ export function AgentNoteApp({
       for (const id of ancestors) next.delete(id);
       return next;
     });
-  }, [activeId, notes, applyCollapsed]);
+  }, [selectedId, notes, applyCollapsed]);
 
   /** Any dialog layered over the workspace swallows the digit shortcuts. */
   const modalOpen =
@@ -1733,7 +1810,7 @@ export function AgentNoteApp({
         event.preventDefault();
         setSidebarOpen((value) => !value);
       }
-      // ⌘1…⌘9 open the Nth row of the list as rendered, and ⌘[ / ⌘] step one
+      // ⌘1…⌘9 open the Nth row of the list as rendered, and ⌘⇧[ / ⌘⇧] step one
       // row up or down from the open note — the same DFS and the same `#tag`
       // filter the user is looking at.
       //
@@ -1749,11 +1826,11 @@ export function AgentNoteApp({
         !isPlainTextEntry(event.target)
       ) {
         const index = noteIndexForShortcut(event);
-        // ⌘[ / ⌘] also work from inside the editor — selecting a note focuses
-        // it, so a chord that stopped at the editor boundary could never step
-        // twice. CodeMirror gives the brackets up for exactly as long as this
-        // preference is on (see `noteShortcuts` in codemirror-editor.tsx);
-        // Tab / Shift-Tab remain the indent keys either way.
+        // ⌘⇧[ / ⌘⇧] also work from inside the editor — selecting a note
+        // focuses it, so a chord that stopped at the editor boundary could
+        // never step twice. Shift is what makes that safe: CodeMirror binds
+        // *bare* ⌘[ / ⌘] to indentLess / indentMore and keeps them, so the
+        // editor never has to give a chord up for this preference.
         const step = noteStepForShortcut(event);
         const row =
           index !== null
@@ -1762,7 +1839,7 @@ export function AgentNoteApp({
               ? adjacentSidebarRow(step)
               : undefined;
         // Out of range is a no-op, and an unclaimed chord at that: swallowing
-        // ⌘9 on a three-note list, or ⌘] on the last row, would break the
+        // ⌘9 on a three-note list, or ⌘⇧] on the last row, would break the
         // host's binding for nothing.
         if (row) {
           event.preventDefault();
@@ -1935,7 +2012,7 @@ export function AgentNoteApp({
                 onClick={() => selectDigitShortcuts(!digitShortcuts)}
                 title={`Note shortcuts: ${
                   digitShortcuts ? "On" : "Off"
-                } — ⌘1–9 for the Nth note, ⌘[ / ⌘] for the one above or below`}
+                } — ⌘1–9 for the Nth note, ⌘⇧[ / ⌘⇧] for the one above or below`}
                 aria-label={`Note shortcuts: ${digitShortcuts ? "On" : "Off"}`}
               >
                 <KeyboardIcon size={14} />
@@ -1958,7 +2035,7 @@ export function AgentNoteApp({
               </p>
             ) : (
               sidebarRows.map(({ note, depth, hasChildren, expanded }) => {
-                const active = note.id === activeId;
+                const active = note.id === selectedId;
                 const label =
                   note.id === activeId
                     ? previewTitle({
@@ -2160,7 +2237,6 @@ export function AgentNoteApp({
                       wrap={wrap}
                       noteLinks={noteLinkOptions}
                       knownTags={knownTags}
-                      noteShortcuts={digitShortcuts}
                       autoFocus
                     />
                   ) : (
@@ -2182,7 +2258,6 @@ export function AgentNoteApp({
                     onExternalReconcile={reconcileBodyFromEditor}
                     noteLinks={noteLinkOptions}
                     knownTags={knownTags}
-                    noteShortcuts={digitShortcuts}
                     autoFocus
                   />
                 )}
