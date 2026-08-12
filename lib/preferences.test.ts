@@ -6,6 +6,7 @@ import {
   clampSidebarWidth,
   isWrapPreference,
   noteIndexForShortcut,
+  noteStepForShortcut,
   parseCollapsedIds,
   parseDigitShortcuts,
   parseSidebarWidth,
@@ -158,6 +159,59 @@ describe("noteIndexForShortcut", () => {
     ).toBeNull();
     expect(
       noteIndexForShortcut(chord({ key: "1", code: "Digit1", altKey: true })),
+    ).toBeNull();
+  });
+});
+
+describe("noteStepForShortcut", () => {
+  const chord = (over: Partial<Parameters<typeof noteStepForShortcut>[0]>) => ({
+    key: "",
+    code: "",
+    shiftKey: false,
+    altKey: false,
+    ...over,
+  });
+
+  it("maps ] forward and [ back", () => {
+    expect(noteStepForShortcut(chord({ key: "]", code: "BracketRight" }))).toBe(
+      1,
+    );
+    expect(noteStepForShortcut(chord({ key: "[", code: "BracketLeft" }))).toBe(
+      -1,
+    );
+  });
+
+  // The bracket keys carry other characters on non-US layouts (German ü/+,
+  // French ^/$), so the physical code has to resolve on its own.
+  it("matches on the physical code", () => {
+    expect(noteStepForShortcut(chord({ key: "ü", code: "BracketLeft" }))).toBe(
+      -1,
+    );
+    expect(noteStepForShortcut(chord({ key: "+", code: "BracketRight" }))).toBe(
+      1,
+    );
+  });
+
+  it("ignores every other key", () => {
+    // ⌘\ toggles the sidebar and sits right next to ⌘] — it must not step.
+    expect(
+      noteStepForShortcut(chord({ key: "\\", code: "Backslash" })),
+    ).toBeNull();
+    expect(noteStepForShortcut(chord({ key: "1", code: "Digit1" }))).toBeNull();
+    expect(noteStepForShortcut(chord({ key: "", code: "" }))).toBeNull();
+  });
+
+  // ⌘⇧[ / ⌘⇧] are the tab-switch chords in most editors — leave them free.
+  it("does not match when Shift or Alt is held", () => {
+    expect(
+      noteStepForShortcut(
+        chord({ key: "]", code: "BracketRight", shiftKey: true }),
+      ),
+    ).toBeNull();
+    expect(
+      noteStepForShortcut(
+        chord({ key: "[", code: "BracketLeft", altKey: true }),
+      ),
     ).toBeNull();
   });
 });

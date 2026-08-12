@@ -48,6 +48,7 @@ import {
   clampSidebarWidth,
   isWrapPreference,
   noteIndexForShortcut,
+  noteStepForShortcut,
   parseCollapsedIds,
   parseDigitShortcuts,
   parseSidebarWidth,
@@ -809,6 +810,23 @@ export function AgentNoteApp({
     }
     return flattenNoteTree(notes, collapsed);
   }, [notes, tagFilter, collapsed]);
+
+  /**
+   * The row one `step` away from the open note, or undefined at either end —
+   * ⌘[ / ⌘] do not wrap. Undefined too when the open note is not in the list
+   * at all (nothing open, or a `#tag` filter that excludes it): there is no
+   * "adjacent" to a row that is not rendered.
+   */
+  const adjacentSidebarRow = useCallback(
+    (step: -1 | 1) => {
+      const current = sidebarRows.findIndex(
+        (row) => row.note.id === activeIdRef.current,
+      );
+      if (current === -1) return undefined;
+      return sidebarRows[current + step];
+    },
+    [sidebarRows],
+  );
 
   const activeNote = useMemo(
     () => notes.find((note) => note.id === activeId) ?? null,
@@ -1715,8 +1733,9 @@ export function AgentNoteApp({
         event.preventDefault();
         setSidebarOpen((value) => !value);
       }
-      // ⌘1…⌘9 open the Nth row of the list as rendered — the same DFS and the
-      // same `#tag` filter the user is looking at.
+      // ⌘1…⌘9 open the Nth row of the list as rendered, and ⌘[ / ⌘] step one
+      // row up or down from the open note — the same DFS and the same `#tag`
+      // filter the user is looking at.
       //
       // Opt-in and off by default: browsers and OS shells already own these
       // chords (Chromium and Safari tab switching, for one), so while the
@@ -1730,9 +1749,21 @@ export function AgentNoteApp({
         !isPlainTextEntry(event.target)
       ) {
         const index = noteIndexForShortcut(event);
-        const row = index === null ? undefined : sidebarRows[index];
+        // ⌘[ / ⌘] also work from inside the editor — selecting a note focuses
+        // it, so a chord that stopped at the editor boundary could never step
+        // twice. CodeMirror gives the brackets up for exactly as long as this
+        // preference is on (see `noteShortcuts` in codemirror-editor.tsx);
+        // Tab / Shift-Tab remain the indent keys either way.
+        const step = noteStepForShortcut(event);
+        const row =
+          index !== null
+            ? sidebarRows[index]
+            : step !== null
+              ? adjacentSidebarRow(step)
+              : undefined;
         // Out of range is a no-op, and an unclaimed chord at that: swallowing
-        // ⌘9 on a three-note list would break the host's binding for nothing.
+        // ⌘9 on a three-note list, or ⌘] on the last row, would break the
+        // host's binding for nothing.
         if (row) {
           event.preventDefault();
           setSidebarOpen(true);
@@ -1748,6 +1779,7 @@ export function AgentNoteApp({
     modalOpen,
     digitShortcuts,
     sidebarRows,
+    adjacentSidebarRow,
     selectNote,
   ]);
 
@@ -1901,10 +1933,10 @@ export function AgentNoteApp({
                 data-active={digitShortcuts ? "true" : "false"}
                 aria-pressed={digitShortcuts}
                 onClick={() => selectDigitShortcuts(!digitShortcuts)}
-                title={`⌘1–9 note jump: ${
+                title={`Note shortcuts: ${
                   digitShortcuts ? "On" : "Off"
-                } — select the Nth note in this list`}
-                aria-label={`⌘1–9 note jump: ${digitShortcuts ? "On" : "Off"}`}
+                } — ⌘1–9 for the Nth note, ⌘[ / ⌘] for the one above or below`}
+                aria-label={`Note shortcuts: ${digitShortcuts ? "On" : "Off"}`}
               >
                 <KeyboardIcon size={14} />
               </button>
@@ -2128,6 +2160,7 @@ export function AgentNoteApp({
                       wrap={wrap}
                       noteLinks={noteLinkOptions}
                       knownTags={knownTags}
+                      noteShortcuts={digitShortcuts}
                       autoFocus
                     />
                   ) : (
@@ -2149,6 +2182,7 @@ export function AgentNoteApp({
                     onExternalReconcile={reconcileBodyFromEditor}
                     noteLinks={noteLinkOptions}
                     knownTags={knownTags}
+                    noteShortcuts={digitShortcuts}
                     autoFocus
                   />
                 )}
