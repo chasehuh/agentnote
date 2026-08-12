@@ -172,45 +172,72 @@ describe("noteStepForShortcut", () => {
     ...over,
   });
 
-  it("maps ] forward and [ back", () => {
-    expect(noteStepForShortcut(chord({ key: "]", code: "BracketRight" }))).toBe(
-      1,
-    );
-    expect(noteStepForShortcut(chord({ key: "[", code: "BracketLeft" }))).toBe(
-      -1,
-    );
+  it("maps ⇧] forward and ⇧[ back", () => {
+    // Shift turns the brackets into braces on a US layout.
+    expect(
+      noteStepForShortcut(
+        chord({ key: "}", code: "BracketRight", shiftKey: true }),
+      ),
+    ).toBe(1);
+    expect(
+      noteStepForShortcut(
+        chord({ key: "{", code: "BracketLeft", shiftKey: true }),
+      ),
+    ).toBe(-1);
+    // Layouts that leave `key` unshifted resolve the same way.
+    expect(
+      noteStepForShortcut(
+        chord({ key: "]", code: "BracketRight", shiftKey: true }),
+      ),
+    ).toBe(1);
+    expect(
+      noteStepForShortcut(
+        chord({ key: "[", code: "BracketLeft", shiftKey: true }),
+      ),
+    ).toBe(-1);
   });
 
   // The bracket keys carry other characters on non-US layouts (German ü/+,
   // French ^/$), so the physical code has to resolve on its own.
   it("matches on the physical code", () => {
-    expect(noteStepForShortcut(chord({ key: "ü", code: "BracketLeft" }))).toBe(
-      -1,
-    );
-    expect(noteStepForShortcut(chord({ key: "+", code: "BracketRight" }))).toBe(
-      1,
-    );
+    expect(
+      noteStepForShortcut(
+        chord({ key: "Ü", code: "BracketLeft", shiftKey: true }),
+      ),
+    ).toBe(-1);
+    expect(
+      noteStepForShortcut(
+        chord({ key: "*", code: "BracketRight", shiftKey: true }),
+      ),
+    ).toBe(1);
   });
 
   it("ignores every other key", () => {
-    // ⌘\ toggles the sidebar and sits right next to ⌘] — it must not step.
+    // ⌘⇧\ sits right next to ⌘⇧] — it must not step.
     expect(
-      noteStepForShortcut(chord({ key: "\\", code: "Backslash" })),
+      noteStepForShortcut(chord({ key: "|", code: "Backslash", shiftKey: true })),
     ).toBeNull();
-    expect(noteStepForShortcut(chord({ key: "1", code: "Digit1" }))).toBeNull();
+    expect(
+      noteStepForShortcut(chord({ key: "!", code: "Digit1", shiftKey: true })),
+    ).toBeNull();
     expect(noteStepForShortcut(chord({ key: "", code: "" }))).toBeNull();
   });
 
-  // ⌘⇧[ / ⌘⇧] are the tab-switch chords in most editors — leave them free.
-  it("does not match when Shift or Alt is held", () => {
+  // The whole point of #118: bare ⌘[ / ⌘] are CodeMirror's indentLess /
+  // indentMore and stay the editor's, so the unshifted chord must not step.
+  it("does not match without Shift", () => {
     expect(
-      noteStepForShortcut(
-        chord({ key: "]", code: "BracketRight", shiftKey: true }),
-      ),
+      noteStepForShortcut(chord({ key: "]", code: "BracketRight" })),
     ).toBeNull();
     expect(
+      noteStepForShortcut(chord({ key: "[", code: "BracketLeft" })),
+    ).toBeNull();
+  });
+
+  it("does not match when Alt is held", () => {
+    expect(
       noteStepForShortcut(
-        chord({ key: "[", code: "BracketLeft", altKey: true }),
+        chord({ key: "}", code: "BracketRight", shiftKey: true, altKey: true }),
       ),
     ).toBeNull();
   });
