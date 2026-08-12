@@ -35,10 +35,9 @@ import {
   WRAP_STORAGE_KEY,
   clampSidebarWidth,
   isWrapPreference,
+  noteIndexForShortcut,
   parseCollapsedIds,
   parseSidebarWidth,
-  sidebarSegmentForShortcut,
-  type SidebarSegment,
 } from "@/lib/preferences";
 import { bodyFingerprint } from "@/lib/body-fingerprint";
 import {
@@ -76,7 +75,6 @@ import {
 } from "@/lib/themes";
 import { ARCHIVE_RETENTION_DAYS, daysUntilArchivePurge } from "@/lib/archive";
 import { AccountMenu } from "./account-menu";
-import { PoweredBySume } from "./powered-by-sume";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import { ConfirmDialog } from "./confirm-dialog";
 import {
@@ -149,50 +147,6 @@ function sortArchivedByDeleted(notes: Note[]) {
   });
 }
 
-function formatUpdatedAt(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-
-  const now = new Date();
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  );
-  const startOfThatDay = new Date(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate(),
-  );
-  const dayDiff = Math.round(
-    (startOfToday.getTime() - startOfThatDay.getTime()) / 86_400_000,
-  );
-
-  if (dayDiff === 0) {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(date);
-  }
-  if (dayDiff === 1) return "Yesterday";
-  if (dayDiff < 7) {
-    return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
-      date,
-    );
-  }
-  if (date.getFullYear() === now.getFullYear()) {
-    return new Intl.DateTimeFormat(undefined, {
-      month: "short",
-      day: "numeric",
-    }).format(date);
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(date);
-}
-
 function resolveInitialNote(
   notes: Note[],
   initialSelectedId?: string,
@@ -262,8 +216,8 @@ export function AgentNoteApp({
     null,
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  /** Which sidebar list is showing. Session-local: a reload always lands on Notes. */
-  const [sidebarSegment, setSidebarSegment] = useState<SidebarSegment>("notes");
+  /** Bottom archived disclosure. Session-local: a reload always lands collapsed. */
+  const [archivedOpen, setArchivedOpen] = useState(false);
   /**
    * Panel width while open. Server-rendered at the default and restored from
    * `localStorage` in the preferences effect, so SSR and the first client paint
@@ -682,12 +636,6 @@ export function AgentNoteApp({
     );
   }, [applySidebarWidth]);
 
-  /** Mod+1 / Mod+2: reveal the sidebar on the chosen segment. */
-  const showSidebarSegment = useCallback((segment: SidebarSegment) => {
-    setSidebarOpen(true);
-    setSidebarSegment(segment);
-  }, []);
-
   /**
    * Apply and persist a collapsed-set change. Reads through a ref so the
    * localStorage write stays out of the state updater.
@@ -760,9 +708,6 @@ export function AgentNoteApp({
     }
     return flattenNoteTree(notes, collapsed);
   }, [notes, tagFilter, collapsed]);
-
-  /** Scanning every body is not free — recompute only when the notes change. */
-  const availableTags = useMemo(() => allTags(notes), [notes]);
 
   const activeNote = useMemo(
     () => notes.find((note) => note.id === activeId) ?? null,
@@ -1638,7 +1583,7 @@ export function AgentNoteApp({
     });
   }, [activeId, notes, applyCollapsed]);
 
-  /** Any dialog layered over the workspace swallows the segment shortcuts. */
+  /** Any dialog layered over the workspace swallows the digit shortcuts. */
   const modalOpen =
     settingsOpen ||
     publishOpen ||
@@ -1677,21 +1622,26 @@ export function AgentNoteApp({
         event.preventDefault();
         setSidebarOpen((value) => !value);
       }
-      // ⌘1 / ⌘2 switch the sidebar segment. Chromium and Safari usually keep
-      // these for their own tab switching on the web, so the tab strip is the
-      // always-available path; this binding is what a Tauri shell or a host
-      // that does not steal the chord gets (issue #108, accepted limitation).
+      // ⌘1…⌘9 open the Nth row of the list as rendered — the same DFS and the
+      // same `#tag` filter the user is looking at. Chromium and Safari usually
+      // keep these for their own tab switching on the web, so this binding is
+      // what a Tauri shell or a host that does not steal the chord gets
+      // (issue #108, accepted limitation).
       if (meta && !modalOpen && !isPlainTextEntry(event.target)) {
-        const segment = sidebarSegmentForShortcut(event);
-        if (segment) {
+        const index = noteIndexForShortcut(event);
+        const row = index === null ? undefined : sidebarRows[index];
+        // Out of range is a no-op, and an unclaimed chord at that: swallowing
+        // ⌘9 on a three-note list would break the host's binding for nothing.
+        if (row) {
           event.preventDefault();
-          showSidebarSegment(segment);
+          setSidebarOpen(true);
+          void selectNote(row.note);
         }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createNote, applyCollapsed, modalOpen, showSidebarSegment]);
+  }, [createNote, applyCollapsed, modalOpen, sidebarRows, selectNote]);
 
   return (
     <div className="zed-shell" data-resizing={resizing ? "true" : undefined}>
@@ -1822,216 +1772,167 @@ export function AgentNoteApp({
           style={{ "--c-panel-w": `${sidebarWidth}px` } as CSSProperties}
         >
           <div className="zed-panel__header">
-            <div
-              className="zed-panel__segments"
-              role="tablist"
-              aria-label="Sidebar sections"
-            >
+            {/* Zed's project panel has no header chrome at all; the filter
+                readout only exists while a filter is on, because the tag chip
+                strip that used to clear it is gone (issue #110). */}
+            {tagFilter ? (
               <button
                 type="button"
-                role="tab"
-                className="zed-panel__segment"
-                data-active={sidebarSegment === "notes" ? "true" : undefined}
-                aria-selected={sidebarSegment === "notes"}
-                onClick={() => setSidebarSegment("notes")}
-                title="Notes (⌘1)"
+                className="zed-panel__filter"
+                onClick={() => setTagFilter(null)}
+                title={`Clear #${tagFilter} filter`}
               >
-                Notes
+                <span className="zed-panel__filter-tag">#{tagFilter}</span>
+                <span aria-hidden="true">×</span>
               </button>
-              <button
-                type="button"
-                role="tab"
-                className="zed-panel__segment"
-                data-active={sidebarSegment === "archived" ? "true" : undefined}
-                aria-selected={sidebarSegment === "archived"}
-                onClick={() => setSidebarSegment("archived")}
-                title="Archived (⌘2)"
-              >
-                Archived
-                {archivedNotes.length > 0 ? (
-                  <span className="zed-panel__segment-count">
-                    {archivedNotes.length}
-                  </span>
-                ) : null}
-              </button>
-            </div>
+            ) : null}
             <div className="zed-panel__actions">
-              {sidebarSegment === "notes" ? (
-                <button
-                  type="button"
-                  className="zed-icon-btn"
-                  onClick={() => void createNote()}
-                  title="New note (⌘N)"
-                  aria-label="New note"
-                >
-                  <PlusIcon size={14} />
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="zed-icon-btn"
+                onClick={() => void createNote()}
+                title="New note (⌘N)"
+                aria-label="New note"
+              >
+                <PlusIcon size={14} />
+              </button>
             </div>
           </div>
-          {sidebarSegment === "archived" ? (
-            <div className="zed-panel__archived-list">
-              {archivedNotes.length === 0 ? (
-                <p className="zed-panel__empty">No archived notes</p>
-              ) : (
-                archivedNotes.map((note) => {
-                  const daysLeft = note.deleted_at
-                    ? daysUntilArchivePurge(note.deleted_at)
-                    : ARCHIVE_RETENTION_DAYS;
-                  return (
-                    <div key={note.id} className="zed-note-item">
-                      <div
-                        className="zed-note-item__hit"
-                        style={{ cursor: "default" }}
-                      >
-                        <span className="zed-note-item__title">
-                          {previewTitle(note)}
-                        </span>
-                        <span className="zed-note-item__meta">
-                          Deletes in {daysLeft}d
-                        </span>
-                      </div>
-                      <div className="zed-note-item__actions">
-                        <button
-                          type="button"
-                          className="zed-note-item__restore"
-                          onClick={() => void restoreArchived(note)}
-                        >
-                          Restore
-                        </button>
-                        <button
-                          type="button"
-                          className="zed-note-item__purge"
-                          onClick={() => requestPermanentDelete(note)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          ) : null}
-          {sidebarSegment === "notes" && availableTags.length > 0 ? (
-            <div className="zed-panel__tags">
-              {availableTags.map((tag) => (
-                <button
-                  key={tag}
-                  type="button"
-                  className="zed-tag-chip"
-                  data-active={tag === tagFilter ? "true" : undefined}
-                  aria-pressed={tag === tagFilter}
-                  onClick={() =>
-                    setTagFilter((prev) => (prev === tag ? null : tag))
-                  }
-                  title={
-                    tag === tagFilter ? `Clear #${tag} filter` : `Filter #${tag}`
-                  }
-                >
-                  #{tag}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {sidebarSegment === "notes" ? (
-            <nav className="zed-panel__list">
-              {sidebarRows.length === 0 ? (
-                <p className="zed-panel__empty">
-                  {tagFilter ? `No notes tagged #${tagFilter}` : "No notes yet"}
-                </p>
-              ) : (
-                sidebarRows.map(({ note, depth, hasChildren, expanded }) => {
-                  const active = note.id === activeId;
-                  const label =
-                    note.id === activeId
-                      ? previewTitle({
-                          title: deriveNoteTitle(displayBody),
-                          body: displayBody,
-                        })
-                      : previewTitle(note);
-                  const updatedLabel =
-                    note.id === activeId && displaySaveState === "error"
-                      ? CRDT_ENABLED
-                        ? "Offline"
-                        : "Not saved"
-                      : note.id === activeId &&
-                          (displaySaveState === "dirty" ||
-                            displaySaveState === "saving")
-                        ? "Just now"
-                        : formatUpdatedAt(note.updated_at);
-                  return (
-                    <div
-                      key={note.id}
-                      className="zed-note-item"
-                      data-active={active}
-                      style={{ "--depth": depth } as CSSProperties}
+          <nav className="zed-panel__list">
+            {sidebarRows.length === 0 ? (
+              <p className="zed-panel__empty">
+                {tagFilter ? `No notes tagged #${tagFilter}` : "No notes yet"}
+              </p>
+            ) : (
+              sidebarRows.map(({ note, depth, hasChildren, expanded }) => {
+                const active = note.id === activeId;
+                const label =
+                  note.id === activeId
+                    ? previewTitle({
+                        title: deriveNoteTitle(displayBody),
+                        body: displayBody,
+                      })
+                    : previewTitle(note);
+                return (
+                  <div
+                    key={note.id}
+                    className="zed-note-item"
+                    data-active={active}
+                    style={{ "--depth": depth } as CSSProperties}
+                  >
+                    <button
+                      type="button"
+                      className="zed-note-item__hit"
+                      onClick={() => void selectNote(note)}
+                      // Zed project-panel arrows: → opens a row, ← closes it.
+                      onKeyDown={(event) => {
+                        if (!hasChildren) return;
+                        if (event.key === "ArrowRight" && !expanded) {
+                          event.preventDefault();
+                          toggleCollapsed(note.id);
+                        }
+                        if (event.key === "ArrowLeft" && expanded) {
+                          event.preventDefault();
+                          toggleCollapsed(note.id);
+                        }
+                      }}
                     >
-                      <button
-                        type="button"
-                        className="zed-note-item__hit"
-                        onClick={() => void selectNote(note)}
-                        // Zed project-panel arrows: → opens a row, ← closes it.
-                        onKeyDown={(event) => {
-                          if (!hasChildren) return;
-                          if (event.key === "ArrowRight" && !expanded) {
-                            event.preventDefault();
-                            toggleCollapsed(note.id);
-                          }
-                          if (event.key === "ArrowLeft" && expanded) {
-                            event.preventDefault();
-                            toggleCollapsed(note.id);
-                          }
-                        }}
+                      <span
+                        className="zed-note-item__title"
+                        data-public={note.is_public ? "true" : undefined}
                       >
-                        <span
-                          className="zed-note-item__title"
-                          data-public={note.is_public ? "true" : undefined}
-                        >
-                          {label}
-                        </span>
-                        <span className="zed-note-item__date">{updatedLabel}</span>
-                      </button>
-                      {hasChildren ? (
-                        <button
-                          type="button"
-                          className="zed-note-item__chevron"
-                          data-expanded={expanded ? "true" : undefined}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleCollapsed(note.id);
-                          }}
-                          aria-expanded={expanded}
-                          aria-label={
-                            expanded ? "Collapse sub-notes" : "Expand sub-notes"
-                          }
-                          title={
-                            expanded ? "Collapse sub-notes" : "Expand sub-notes"
-                          }
-                        >
-                          <ChevronRightIcon size={12} />
-                        </button>
-                      ) : null}
+                        {label}
+                      </span>
+                    </button>
+                    {hasChildren ? (
                       <button
                         type="button"
-                        className="zed-note-item__delete"
+                        className="zed-note-item__chevron"
+                        data-expanded={expanded ? "true" : undefined}
                         onClick={(event) => {
                           event.stopPropagation();
-                          requestArchive(note);
+                          toggleCollapsed(note.id);
                         }}
-                        aria-label="Archive note"
+                        aria-expanded={expanded}
+                        aria-label={
+                          expanded ? "Collapse sub-notes" : "Expand sub-notes"
+                        }
+                        title={
+                          expanded ? "Collapse sub-notes" : "Expand sub-notes"
+                        }
                       >
-                        ×
+                        <ChevronRightIcon size={12} />
                       </button>
-                    </div>
-                  );
-                })
-              )}
-            </nav>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="zed-note-item__delete"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        requestArchive(note);
+                      }}
+                      aria-label="Archive note"
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </nav>
+          {archivedNotes.length > 0 ? (
+            <div className="zed-panel__archived">
+              <button
+                type="button"
+                className="zed-panel__archived-toggle"
+                onClick={() => setArchivedOpen((value) => !value)}
+                aria-expanded={archivedOpen}
+              >
+                <span>Archived</span>
+                <span>{archivedNotes.length}</span>
+              </button>
+              {archivedOpen ? (
+                <div className="zed-panel__archived-list">
+                  {archivedNotes.map((note) => {
+                    const daysLeft = note.deleted_at
+                      ? daysUntilArchivePurge(note.deleted_at)
+                      : ARCHIVE_RETENTION_DAYS;
+                    return (
+                      <div key={note.id} className="zed-note-item">
+                        <div
+                          className="zed-note-item__hit"
+                          style={{ cursor: "default" }}
+                        >
+                          <span className="zed-note-item__title">
+                            {previewTitle(note)}
+                          </span>
+                          <span className="zed-note-item__meta">
+                            Deletes in {daysLeft}d
+                          </span>
+                        </div>
+                        <div className="zed-note-item__actions">
+                          <button
+                            type="button"
+                            className="zed-note-item__restore"
+                            onClick={() => void restoreArchived(note)}
+                          >
+                            Restore
+                          </button>
+                          <button
+                            type="button"
+                            className="zed-note-item__purge"
+                            onClick={() => requestPermanentDelete(note)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
           ) : null}
-          <div className="zed-panel__footer">
-            <PoweredBySume className="sume-powered--panel" />
-          </div>
           {/* Right-edge drag handle. Wider hit area than the hairline it draws. */}
           <div
             className="zed-panel__resizer"

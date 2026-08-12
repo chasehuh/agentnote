@@ -53,31 +53,36 @@ export function parseSidebarWidth(
   return clampSidebarWidth(px, viewportWidth);
 }
 
-/** Which list the sidebar is showing. Session-local — not persisted, not in the URL. */
-export type SidebarSegment = "notes" | "archived";
+/** Highest note row a Mod+digit chord can reach. Mod+0 is deliberately unbound. */
+const MAX_SHORTCUT_NOTE_INDEX = 8;
+
+/** The digit a keydown names, from either the layout-dependent `key` or the physical `code`. */
+function shortcutDigit(key: string, code: string): number | null {
+  if (key.length === 1 && key >= "0" && key <= "9") return Number(key);
+  const physical = /^(?:Digit|Numpad)([0-9])$/.exec(code);
+  return physical ? Number(physical[1]) : null;
+}
 
 /**
- * Mod+1 / Mod+2 → segment. Null for every other key.
+ * Mod+1…Mod+9 → the 0-based index of the note row to open. Null for every other key.
  *
- * The caller owns the `metaKey || ctrlKey` check; this only decides whether the
- * rest of the chord matches. Shift/Alt disqualify so ⌘⇧1-style bindings added
- * later stay free, and `code` is checked alongside `key` so non-US layouts and
- * the numpad still resolve.
+ * The caller owns the `metaKey || ctrlKey` check and the out-of-range decision;
+ * this only decides whether the rest of the chord matches. Shift/Alt disqualify
+ * so ⌘⇧1-style bindings added later stay free, and `code` is checked alongside
+ * `key` so non-US layouts and the numpad still resolve.
  */
-export function sidebarSegmentForShortcut(event: {
+export function noteIndexForShortcut(event: {
   key: string;
   code: string;
   shiftKey: boolean;
   altKey: boolean;
-}): SidebarSegment | null {
+}): number | null {
   if (event.shiftKey || event.altKey) return null;
-  if (event.key === "1" || event.code === "Digit1" || event.code === "Numpad1") {
-    return "notes";
-  }
-  if (event.key === "2" || event.code === "Digit2" || event.code === "Numpad2") {
-    return "archived";
-  }
-  return null;
+  const digit = shortcutDigit(event.key, event.code);
+  // Mod+0 has no 0th row to select, so it stays free for the browser.
+  if (digit === null || digit === 0) return null;
+  const index = digit - 1;
+  return index <= MAX_SHORTCUT_NOTE_INDEX ? index : null;
 }
 
 /**
