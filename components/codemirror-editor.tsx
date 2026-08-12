@@ -23,6 +23,10 @@ import { yCollab, yUndoManagerKeymap } from "y-codemirror.next";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
 import { applyExternalValue } from "@/lib/editor/apply-external";
+import {
+  clampedSelection,
+  type NoteViewState,
+} from "@/lib/editor/view-state";
 import { arrowInputHandler, arrowPasteFilter } from "@/lib/editor/arrow-input";
 import { agentnoteBoldKeymap } from "@/lib/editor/bold";
 import { agentnoteDashJoin } from "@/lib/editor/dash-join";
@@ -78,6 +82,19 @@ type CodeMirrorEditorProps = {
   noteLinks?: NoteLinkOptions;
   /** Tags known across the user's notes, for `#` completion. */
   knownTags?: () => string[];
+  /**
+   * Caret + scroll to open at, from the last time this note was on screen.
+   * Read once, at construction — see the mount effect.
+   */
+  viewState?: NoteViewState;
+  /**
+   * Called whenever the caret or the scroll position moves, rAF-throttled.
+   *
+   * Sampling has to happen while the view is alive: by the time a React
+   * cleanup runs, the scroller is detached (or its `scrollTop` already zeroed)
+   * and `scrollSnapshot()` resolves to the top of the document.
+   */
+  onViewState?: (state: NoteViewState) => void;
 };
 
 function insertSoftTab(view: EditorView) {
@@ -102,8 +119,29 @@ function editorExtensions(
   awareness: Awareness | null | undefined,
   noteLinks: NoteLinkOptions | undefined,
   knownTags: (() => string[]) | undefined,
+  sample: ((view: EditorView) => void) | undefined,
 ) {
   return [
+    ...(sample
+      ? [
+          EditorView.updateListener.of((update) => {
+            if (
+              update.selectionSet ||
+              update.docChanged ||
+              update.geometryChanged
+            ) {
+              sample(update.view);
+            }
+          }),
+          // updateListener does not fire for a plain scroll — the document and
+          // the selection are both unchanged.
+          EditorView.domEventHandlers({
+            scroll: (_event, view) => {
+              sample(view);
+            },
+          }),
+        ]
+      : []),
     lineNumbers(),
     ...(readOnly
       ? []
@@ -282,6 +320,8 @@ export function CodeMirrorEditor({
   readOnly = false,
   noteLinks,
   knownTags,
+  viewState,
+  onViewState,
 }: CodeMirrorEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -296,9 +336,11 @@ export function CodeMirrorEditor({
   const knownTagsRef = useRef(knownTags);
   const wrapCompartment = useRef(new Compartment());
   const applyingExternal = useRef(false);
+  const onViewStateRef = useRef(onViewState);
 
   onChangeRef.current = onChange;
   onExternalReconcileRef.current = onExternalReconcile;
+  onViewStateRef.current = onViewState;
 
   useEffect(() => {
     noteLinksRef.current = noteLinks;
@@ -308,9 +350,37 @@ export function CodeMirrorEditor({
   useEffect(() => {
     if (!hostRef.current) return;
 
+    // Nothing is worth sampling until CM has measured once: until then the
+    // scroller is still being restored, and a snapshot read mid-restore would
+    // overwrite a good position with the top of the document.
+    let measured = false;
+    // One sample per frame at most: a scroll fires this per wheel tick, and
+    // `scrollSnapshot()` measures.
+    let queued = 0;
+    const sample = (view: EditorView) => {
+      if (!measured || queued) return;
+      queued = requestAnimationFrame(() => {
+        queued = 0;
+        // A detached scroller measures as scrollTop 0 and would record a
+        // top-of-document snapshot over a perfectly good one.
+        if (!view.scrollDOM.isConnected) return;
+        onViewStateRef.current?.({
+          anchor: view.state.selection.main.anchor,
+          head: view.state.selection.main.head,
+          scroll: view.scrollSnapshot(),
+          top: view.scrollDOM.scrollTop,
+        });
+      });
+    };
+
+    const doc = ytext ? ytext.toString() : value;
     const view = new EditorView({
       state: EditorState.create({
-        doc: ytext ? ytext.toString() : value,
+        doc,
+        // Restore at construction, so the buffer never paints at the top and
+        // then jumps. Clamped: a stale offset from a since-shortened note
+        // would otherwise throw out of this effect.
+        selection: clampedSelection(viewState, doc.length),
         extensions: editorExtensions(
           wrap,
           wrapCompartment.current,
@@ -329,15 +399,35 @@ export function CodeMirrorEditor({
               }
             : undefined,
           () => knownTagsRef.current?.() ?? [],
+          onViewState ? sample : undefined,
         ),
       }),
       parent: hostRef.current,
+      // Applied on the first measure, before paint. The snapshot came from a
+      // view that no longer exists, which is fine — a ScrollTarget is a
+      // document position plus an offset, not a handle on the old scroller.
+      scrollTo: viewState?.scroll,
+    });
+
+    // CM applies `scrollTo` from its first measure, which the constructor
+    // schedules a frame out — long enough to paint the buffer at the top once.
+    // Seed the pixel offset now so that frame is already in the right place;
+    // the measure then re-resolves it from the document anchor.
+    if (viewState && viewState.top > 0) {
+      view.scrollDOM.scrollTop = viewState.top;
+    }
+    // CM registered its measure inside the constructor, so it runs before this
+    // one: by here the restore has settled and samples mean something.
+    const openMeasure = requestAnimationFrame(() => {
+      measured = true;
     });
 
     viewRef.current = view;
     if (autoFocus) view.focus();
 
     return () => {
+      cancelAnimationFrame(queued);
+      cancelAnimationFrame(openMeasure);
       view.destroy();
       viewRef.current = null;
     };
