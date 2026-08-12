@@ -72,6 +72,27 @@ export function parseDigitShortcuts(value: string | null): boolean {
   return DEFAULT_DIGIT_SHORTCUTS;
 }
 
+/**
+ * Mod+[ / Mod+] → a step of -1 (previous row) or +1 (next row) in the rendered
+ * note list. Null for every other key.
+ *
+ * Same contract as `noteIndexForShortcut`: the caller owns the `metaKey ||
+ * ctrlKey` check and the end-of-list decision. Shift/Alt disqualify so ⌘⇧[
+ * stays free, and `code` is checked alongside `key` because the bracket keys
+ * carry different characters on non-US layouts.
+ */
+export function noteStepForShortcut(event: {
+  key: string;
+  code: string;
+  shiftKey: boolean;
+  altKey: boolean;
+}): -1 | 1 | null {
+  if (event.shiftKey || event.altKey) return null;
+  if (event.key === "[" || event.code === "BracketLeft") return -1;
+  if (event.key === "]" || event.code === "BracketRight") return 1;
+  return null;
+}
+
 /** Highest note row a Mod+digit chord can reach. Mod+0 is deliberately unbound. */
 const MAX_SHORTCUT_NOTE_INDEX = 8;
 

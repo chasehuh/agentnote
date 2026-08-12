@@ -78,6 +78,12 @@ type CodeMirrorEditorProps = {
   noteLinks?: NoteLinkOptions;
   /** Tags known across the user's notes, for `#` completion. */
   knownTags?: () => string[];
+  /**
+   * True while the ⌘1–9 / ⌘[ / ⌘] note shortcuts are opted in. The bracket
+   * chords then belong to the sidebar, so this editor stops indenting with
+   * them; false restores `defaultKeymap`'s indentLess / indentMore.
+   */
+  noteShortcuts?: boolean;
 };
 
 function insertSoftTab(view: EditorView) {
@@ -102,6 +108,7 @@ function editorExtensions(
   awareness: Awareness | null | undefined,
   noteLinks: NoteLinkOptions | undefined,
   knownTags: (() => string[]) | undefined,
+  noteShortcuts: { current: boolean | undefined },
 ) {
   return [
     lineNumbers(),
@@ -136,6 +143,19 @@ function editorExtensions(
           Prec.highest(
             keymap.of([
               { key: "Enter", run: agentnoteInsertNewlineContinueMarkup },
+            ]),
+          ),
+          // ⌘[ / ⌘] are defaultKeymap's indentLess / indentMore. While the
+          // note shortcuts are opted in they mean "previous / next note"
+          // instead — and the handler for that sits on `window`, where
+          // returning true here cannot stop it. So swallow the chord to keep
+          // the editor from ALSO indenting; returning false hands it straight
+          // back to defaultKeymap. Tab / Shift-Tab stay the indent keys either
+          // way (agentnoteListIndentOnTab).
+          Prec.highest(
+            keymap.of([
+              { key: "Mod-[", run: () => noteShortcuts.current === true },
+              { key: "Mod-]", run: () => noteShortcuts.current === true },
             ]),
           ),
           keymap.of([
@@ -282,6 +302,7 @@ export function CodeMirrorEditor({
   readOnly = false,
   noteLinks,
   knownTags,
+  noteShortcuts = false,
 }: CodeMirrorEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -296,9 +317,12 @@ export function CodeMirrorEditor({
   const knownTagsRef = useRef(knownTags);
   const wrapCompartment = useRef(new Compartment());
   const applyingExternal = useRef(false);
+  // Read on keypress, so toggling the preference takes effect without a remount.
+  const noteShortcutsRef = useRef(noteShortcuts);
 
   onChangeRef.current = onChange;
   onExternalReconcileRef.current = onExternalReconcile;
+  noteShortcutsRef.current = noteShortcuts;
 
   useEffect(() => {
     noteLinksRef.current = noteLinks;
@@ -329,6 +353,7 @@ export function CodeMirrorEditor({
               }
             : undefined,
           () => knownTagsRef.current?.() ?? [],
+          noteShortcutsRef,
         ),
       }),
       parent: hostRef.current,
