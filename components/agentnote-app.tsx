@@ -88,6 +88,11 @@ import {
   type ThemeId,
 } from "@/lib/themes";
 import { ARCHIVE_RETENTION_DAYS, daysUntilArchivePurge } from "@/lib/archive";
+import {
+  rememberNoteViewState,
+  type NoteViewState,
+  type NoteViewStateStore,
+} from "@/lib/editor/view-state";
 import { AccountMenu } from "./account-menu";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -348,6 +353,22 @@ export function AgentNoteApp({
     pendingSelectionRef.current = id;
     setPendingSelectionId(id);
   }, []);
+
+  /**
+   * Caret + scroll per note, so switching back lands where the user left off
+   * instead of at the top.
+   *
+   * Session memory on purpose: a tab-local `Map`, never persisted and never
+   * synced. An offset only means anything against the document it was taken
+   * from, and a reload (or another device) may have moved that document on.
+   */
+  const noteViewStates = useRef<NoteViewStateStore>(new Map());
+  const rememberViewState = useCallback(
+    (noteId: string, state: NoteViewState) => {
+      rememberNoteViewState(noteViewStates.current, noteId, state);
+    },
+    [],
+  );
 
   /** Refresh the sidebar row from the server's plaintext projection of the CRDT. */
   const applyDocProjection = useCallback((projection: NoteDocProjection) => {
@@ -2237,15 +2258,24 @@ export function AgentNoteApp({
                       wrap={wrap}
                       noteLinks={noteLinkOptions}
                       knownTags={knownTags}
+                      viewState={noteViewStates.current.get(activeId)}
+                      onViewState={(state) => rememberViewState(activeId, state)}
                       autoFocus
                     />
                   ) : (
                     // Never edit before the server state lands: a locally seeded
                     // doc merges into duplicated content.
+                    //
+                    // Restores the remembered position but never records one:
+                    // this buffer is the sidebar row's copy of the body, so
+                    // without the restore the note would paint at the top and
+                    // jump once the real doc lands, and with sampling it would
+                    // overwrite a good snapshot using the wrong document.
                     <CodeMirrorEditor
                       key={`${activeId}:loading`}
                       value={body}
                       wrap={wrap}
+                      viewState={noteViewStates.current.get(activeId)}
                       readOnly
                     />
                   )
@@ -2258,6 +2288,8 @@ export function AgentNoteApp({
                     onExternalReconcile={reconcileBodyFromEditor}
                     noteLinks={noteLinkOptions}
                     knownTags={knownTags}
+                    viewState={noteViewStates.current.get(activeId)}
+                    onViewState={(state) => rememberViewState(activeId, state)}
                     autoFocus
                   />
                 )}
