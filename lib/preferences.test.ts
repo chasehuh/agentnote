@@ -5,9 +5,9 @@ import {
   MIN_SIDEBAR_WIDTH,
   clampSidebarWidth,
   isWrapPreference,
+  noteIndexForShortcut,
   parseCollapsedIds,
   parseSidebarWidth,
-  sidebarSegmentForShortcut,
 } from "./preferences";
 
 describe("isWrapPreference", () => {
@@ -95,8 +95,8 @@ describe("parseSidebarWidth", () => {
   });
 });
 
-describe("sidebarSegmentForShortcut", () => {
-  const chord = (over: Partial<Parameters<typeof sidebarSegmentForShortcut>[0]>) => ({
+describe("noteIndexForShortcut", () => {
+  const chord = (over: Partial<Parameters<typeof noteIndexForShortcut>[0]>) => ({
     key: "",
     code: "",
     shiftKey: false,
@@ -104,40 +104,41 @@ describe("sidebarSegmentForShortcut", () => {
     ...over,
   });
 
-  it("maps 1 to Notes and 2 to Archived", () => {
-    expect(sidebarSegmentForShortcut(chord({ key: "1", code: "Digit1" }))).toBe(
-      "notes",
-    );
-    expect(sidebarSegmentForShortcut(chord({ key: "2", code: "Digit2" }))).toBe(
-      "archived",
-    );
+  it("maps digit N to the (N-1)th row", () => {
+    expect(noteIndexForShortcut(chord({ key: "1", code: "Digit1" }))).toBe(0);
+    expect(noteIndexForShortcut(chord({ key: "2", code: "Digit2" }))).toBe(1);
+    expect(noteIndexForShortcut(chord({ key: "9", code: "Digit9" }))).toBe(8);
   });
 
   // Non-US layouts can report a symbol in `key` while `code` stays physical.
   it("matches on the physical code and the numpad", () => {
-    expect(sidebarSegmentForShortcut(chord({ key: "&", code: "Digit1" }))).toBe(
-      "notes",
-    );
-    expect(sidebarSegmentForShortcut(chord({ key: "2", code: "Numpad2" }))).toBe(
-      "archived",
-    );
+    expect(noteIndexForShortcut(chord({ key: "&", code: "Digit1" }))).toBe(0);
+    expect(noteIndexForShortcut(chord({ key: "é", code: "Digit2" }))).toBe(1);
+    expect(noteIndexForShortcut(chord({ key: "3", code: "Numpad3" }))).toBe(2);
   });
 
-  it("ignores other digits and non-digit keys", () => {
+  // ⌘0 is left to the host: there is no 0th row, and no wrap to the last one.
+  it("leaves 0 unbound", () => {
+    expect(noteIndexForShortcut(chord({ key: "0", code: "Digit0" }))).toBeNull();
     expect(
-      sidebarSegmentForShortcut(chord({ key: "3", code: "Digit3" })),
+      noteIndexForShortcut(chord({ key: ")", code: "Numpad0" })),
     ).toBeNull();
+  });
+
+  it("ignores non-digit keys", () => {
+    expect(noteIndexForShortcut(chord({ key: "n", code: "KeyN" }))).toBeNull();
     expect(
-      sidebarSegmentForShortcut(chord({ key: "n", code: "KeyN" })),
+      noteIndexForShortcut(chord({ key: "Enter", code: "Enter" })),
     ).toBeNull();
+    expect(noteIndexForShortcut(chord({ key: "", code: "" }))).toBeNull();
   });
 
   it("does not match when Shift or Alt is held", () => {
     expect(
-      sidebarSegmentForShortcut(chord({ key: "1", code: "Digit1", shiftKey: true })),
+      noteIndexForShortcut(chord({ key: "1", code: "Digit1", shiftKey: true })),
     ).toBeNull();
     expect(
-      sidebarSegmentForShortcut(chord({ key: "1", code: "Digit1", altKey: true })),
+      noteIndexForShortcut(chord({ key: "1", code: "Digit1", altKey: true })),
     ).toBeNull();
   });
 });
