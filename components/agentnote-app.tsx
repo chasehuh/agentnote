@@ -239,6 +239,17 @@ export function AgentNoteApp({
   const [saveErrorKind, setSaveErrorKind] = useState<SaveFailureKind | null>(
     null,
   );
+  /**
+   * Last failed image paste/drop. Uploads are fire-and-forget inside
+   * CodeMirror, so a failure has no other place to land. `seq` keeps a repeat
+   * of the same message a distinct value, so retrying re-arms the timeout
+   * instead of inheriting the first one's remaining time.
+   */
+  const [imageUploadError, setImageUploadError] = useState<{
+    message: string;
+    seq: number;
+  } | null>(null);
+  const imageUploadErrorSeq = useRef(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** Bottom archived disclosure. Session-local: a reload always lands collapsed. */
   const [archivedOpen, setArchivedOpen] = useState(false);
@@ -1760,6 +1771,19 @@ export function AgentNoteApp({
   const syncChrome =
     CRDT_ENABLED && activeId ? crdtSyncChrome(docSession.status) : null;
 
+  const reportImageUploadError = useCallback((message: string) => {
+    imageUploadErrorSeq.current += 1;
+    setImageUploadError({ message, seq: imageUploadErrorSeq.current });
+  }, []);
+
+  // Self-clearing: the note is otherwise fine, so this must not become
+  // permanent titlebar chrome.
+  useEffect(() => {
+    if (!imageUploadError) return;
+    const timer = window.setTimeout(() => setImageUploadError(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [imageUploadError]);
+
   const saveErrorLabel =
     displaySaveErrorKind === "auth"
       ? "Sign in to save"
@@ -1920,6 +1944,22 @@ export function AgentNoteApp({
                 Retry
               </button>
             ) : null}
+          </div>
+        ) : null}
+        {imageUploadError ? (
+          <div
+            className="zed-save-error"
+            role="alert"
+            title={imageUploadError.message}
+          >
+            <span>Image not uploaded</span>
+            <button
+              type="button"
+              className="zed-save-error__action"
+              onClick={() => setImageUploadError(null)}
+            >
+              Dismiss
+            </button>
           </div>
         ) : null}
         {/* Exports the buffer the user is looking at, not the sidebar row. */}
@@ -2260,6 +2300,7 @@ export function AgentNoteApp({
                       knownTags={knownTags}
                       viewState={noteViewStates.current.get(activeId)}
                       onViewState={(state) => rememberViewState(activeId, state)}
+                      onImageUploadError={reportImageUploadError}
                       autoFocus
                     />
                   ) : (
@@ -2290,6 +2331,7 @@ export function AgentNoteApp({
                     knownTags={knownTags}
                     viewState={noteViewStates.current.get(activeId)}
                     onViewState={(state) => rememberViewState(activeId, state)}
+                    onImageUploadError={reportImageUploadError}
                     autoFocus
                   />
                 )}

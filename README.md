@@ -110,6 +110,10 @@ Because the link label is a snapshot of the title at insertion time, renaming a 
 
 When media env vars are set, pasting or dropping an image uploads it (Clerk-authenticated) under a preferred key prefix `agentnote/{userId}/…` and inserts `![alt](url)` Markdown at the caret. CodeMirror renders that mark as an inline preview under the source line (Obsidian Live Preview–style). Drag the corner handle to rewrite Obsidian `|width` syntax (`![alt|480](url)`); double-click the handle to clear the width. The Markdown string remains the only source of truth for body sync and persistence.
 
+Finder drops arrive with an empty `File.type`, so a file whose MIME is missing is classified by extension (`png`, `jpg`, `jpeg`, `gif`, `webp`, `avif`) instead of being dropped on the floor. A declared non-image type is never overridden by its extension. Each file in a drop uploads independently, so one rejection does not cancel the rest, and any failure raises a self-clearing **Image not uploaded** notice in the titlebar (full reason on hover) rather than only a console error.
+
+`MEDIA_UPLOAD_URL` points at the Cloudflare Worker checked in under [`workers/media-upload/`](workers/media-upload/README.md) — `https://agentnote-media-upload.cw-huh.workers.dev`, backed by the R2 bucket `agentnote-media`. It takes a bearer upload and serves `GET /{key}` publicly. `MEDIA_UPLOAD_SECRET` must match the worker's `UPLOAD_SECRET`, which lives only in Cloudflare and Vercel. Without both vars set, `/api/upload` returns 503 and the editor shows the notice.
+
 ### Production GitHub OAuth App (human step)
 
 Development can use Clerk’s shared GitHub credentials. Production needs a GitHub OAuth App:
