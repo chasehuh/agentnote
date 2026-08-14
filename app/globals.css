@@ -947,8 +947,8 @@ a.zed-save-error__action {
   display: block;
   width: 100%;
   height: auto;
-  /* Intrinsic size / aspect-ratio set in image-widgets.ts so layout
-     reserves height before decode (avoids 24px collapse → scroll jump). */
+  /* `|WxH` sets aspect-ratio in image-widgets.ts. Width-only waits for
+     decode so screenshots keep their natural ratio. */
   border: 1px solid var(--c-border-variant);
   user-select: none;
   cursor: pointer;
