@@ -1,0 +1,16 @@
+name = "agentnote-media-upload"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+workers_dev = true
+
+# `account_id` is intentionally not committed. Set CLOUDFLARE_ACCOUNT_ID, or
+# pass the account through your wrangler profile (see README.md).
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "agentnote-media"
+
+# Origin used to build the returned `url`. Unset falls back to the request
+# origin, which is what the deployed worker relies on.
+# [vars]
+# PUBLIC_ORIGIN = "https://agentnote-media-upload.cw-huh.workers.dev"

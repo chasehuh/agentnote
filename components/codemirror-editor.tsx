@@ -95,6 +95,11 @@ type CodeMirrorEditorProps = {
    * and `scrollSnapshot()` resolves to the top of the document.
    */
   onViewState?: (state: NoteViewState) => void;
+  /**
+   * Called when a pasted/dropped image does not upload. Uploads are
+   * fire-and-forget, so the host owns showing this to the user.
+   */
+  onImageUploadError?: (message: string) => void;
 };
 
 function insertSoftTab(view: EditorView) {
@@ -120,6 +125,7 @@ function editorExtensions(
   noteLinks: NoteLinkOptions | undefined,
   knownTags: (() => string[]) | undefined,
   sample: ((view: EditorView) => void) | undefined,
+  onImageUploadErrorRef: { current: ((message: string) => void) | undefined },
 ) {
   return [
     ...(sample
@@ -198,7 +204,9 @@ function editorExtensions(
           agentnoteStrikethroughKeymap(),
           Prec.high(arrowInputHandler()),
           arrowPasteFilter(),
-          imagePasteDrop(),
+          imagePasteDrop({
+            onError: (message) => onImageUploadErrorRef.current?.(message),
+          }),
           // `[[` note links, `/` commands, `#` tags — authoring only.
           ...(noteLinks
             ? [
@@ -322,6 +330,7 @@ export function CodeMirrorEditor({
   knownTags,
   viewState,
   onViewState,
+  onImageUploadError,
 }: CodeMirrorEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -337,10 +346,12 @@ export function CodeMirrorEditor({
   const wrapCompartment = useRef(new Compartment());
   const applyingExternal = useRef(false);
   const onViewStateRef = useRef(onViewState);
+  const onImageUploadErrorRef = useRef(onImageUploadError);
 
   onChangeRef.current = onChange;
   onExternalReconcileRef.current = onExternalReconcile;
   onViewStateRef.current = onViewState;
+  onImageUploadErrorRef.current = onImageUploadError;
 
   useEffect(() => {
     noteLinksRef.current = noteLinks;
@@ -400,6 +411,7 @@ export function CodeMirrorEditor({
             : undefined,
           () => knownTagsRef.current?.() ?? [],
           onViewState ? sample : undefined,
+          onImageUploadErrorRef,
         ),
       }),
       parent: hostRef.current,
