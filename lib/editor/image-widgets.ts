@@ -90,9 +90,16 @@ function applyPreviewBox(host: HTMLElement, image: MarkdownImage) {
   if (image.height != null) {
     img.height = image.height;
     img.style.aspectRatio = `${image.width ?? width} / ${image.height}`;
+    return;
+  }
+  img.removeAttribute("height");
+  // Width-only (`|466`) must not invent a ratio — that stretches screenshots.
+  // After decode, lock the natural ratio so remounts reserve height without
+  // a jump. Before decode, leave `height: auto` (CSS) and let `load` measure.
+  if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+    img.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
   } else {
-    img.removeAttribute("height");
-    img.style.aspectRatio = `${width} / ${Math.round(width * DEFAULT_ASPECT)}`;
+    img.style.removeProperty("aspect-ratio");
   }
 }
 
@@ -129,7 +136,14 @@ export class ImagePreviewWidget extends WidgetType {
     const img = document.createElement("img");
     img.src = this.image.url;
     img.draggable = false;
-    img.addEventListener("load", () => view.requestMeasure(), { once: true });
+    img.addEventListener(
+      "load",
+      () => {
+        applyPreviewBox(wrap, this.image);
+        view.requestMeasure();
+      },
+      { once: true },
+    );
     img.addEventListener("mousedown", (event) => {
       // Keep focus/selection work on click without starting a text drag.
       event.preventDefault();

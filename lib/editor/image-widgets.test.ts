@@ -150,4 +150,12 @@ describe("ImagePreviewWidget DOM stability", () => {
     expect(imgEl?.getAttribute("height")).toBe("250");
     expect(imgEl?.style.aspectRatio.replace(/\s/g, "")).toBe("400/250");
   });
+
+  it("does not invent a 0.625 aspect-ratio for width-only marks", () => {
+    view = mount("![shot|466](https://example.com/shot.png)\n");
+    const imgEl = view.dom.querySelector("img");
+    expect(imgEl?.getAttribute("width")).toBe("466");
+    expect(imgEl?.getAttribute("height")).toBeNull();
+    expect(imgEl?.style.aspectRatio).toBe("");
+  });
 });
